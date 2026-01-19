@@ -176,6 +176,28 @@ export default function AdminUsersPage() {
     }
   };
 
+  const handleResetPassword = async (userId: number) => {
+    const newPassword = prompt('Enter new password for user (min 8 characters):');
+    if (!newPassword) return;
+    
+    if (newPassword.length < 8) {
+      showError('Password must be at least 8 characters');
+      return;
+    }
+    
+    setActionLoading(userId);
+    setError('');
+    try {
+      await api.post(`/api/admin/users/${userId}/reset_password/`, { new_password: newPassword });
+      showSuccess('Password reset successfully');
+    } catch (err: any) {
+      showError(err.response?.data?.detail || 'Failed to reset password');
+    } finally {
+      setActionLoading(null);
+      setActiveMenu(null);
+    }
+  };
+
   const isLocked = (user: User) => {
     if (!user.locked_until) return false;
     return new Date(user.locked_until) > new Date();
@@ -323,11 +345,35 @@ export default function AdminUsersPage() {
                           {activeMenu === user.id && (
                             <>
                               <div
-                                className="fixed inset-0 z-10"
+                                className="fixed inset-0 z-40"
                                 onClick={() => setActiveMenu(null)}
                               />
-                              <div className="absolute right-0 top-full mt-1 w-48 bg-surface-800 border border-surface-700 rounded-lg shadow-xl z-20">
+                              <div className="absolute right-0 top-full mt-1 w-56 bg-surface-800 border border-surface-700 rounded-lg shadow-xl z-50 max-h-96 overflow-y-auto">
                                 <div className="py-1">
+                                  {/* Edit Profile */}
+                                  <button
+                                    onClick={() => {
+                                      router.push(`/${lang}/admin/users/${user.id}`);
+                                      setActiveMenu(null);
+                                    }}
+                                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-left hover:bg-surface-700 transition-colors"
+                                  >
+                                    <Edit className="w-4 h-4 text-surface-400" />
+                                    <span className="text-surface-300">Edit Profile</span>
+                                  </button>
+                                  
+                                  {/* Reset Password */}
+                                  <button
+                                    onClick={() => handleResetPassword(user.id)}
+                                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-left hover:bg-surface-700 transition-colors"
+                                  >
+                                    <Lock className="w-4 h-4 text-surface-400" />
+                                    <span className="text-surface-300">Reset Password</span>
+                                  </button>
+                                  
+                                  <div className="border-t border-surface-700 my-1" />
+                                  
+                                  {/* Admin Toggle */}
                                   <button
                                     onClick={() => handleToggleAdmin(user.id)}
                                     className="w-full flex items-center gap-2 px-4 py-2 text-sm text-left hover:bg-surface-700 transition-colors"
@@ -347,6 +393,7 @@ export default function AdminUsersPage() {
                                   
                                   <div className="border-t border-surface-700 my-1" />
                                   
+                                  {/* Tier Options */}
                                   <button
                                     onClick={() => handleChangeTier(user.id, 'free')}
                                     className="w-full flex items-center gap-2 px-4 py-2 text-sm text-left hover:bg-surface-700 transition-colors"

@@ -9,6 +9,7 @@ import {
   Download,
   FileVideo,
   AlertCircle,
+  Zap,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslations } from '@/lib/i18n';
@@ -21,6 +22,7 @@ interface Job {
   progress: number;
   stage: string;
   eta?: number;
+  speed?: number;
   error?: string;
 }
 
@@ -105,6 +107,7 @@ function JobCard({ job, lang, onUpdate }: JobCardProps) {
           status: data.status,
           stage: data.stage,
           eta: data.eta,
+          speed: data.speed,
           error: data.error,
         });
       },
@@ -155,8 +158,18 @@ function JobCard({ job, lang, onUpdate }: JobCardProps) {
             />
           </div>
           <div className="flex justify-between mt-1 text-xs text-surface-500">
-            <span>{job.progress}%</span>
-            {job.eta && <span>ETA: {formatTime(job.eta)}</span>}
+            <span className="flex items-center gap-2">
+              {job.progress}%
+              {job.speed && job.speed > 0 && (
+                <span className="flex items-center gap-0.5 text-primary-400">
+                  <Zap className="w-3 h-3" />
+                  {job.speed.toFixed(1)}x
+                </span>
+              )}
+            </span>
+            {job.eta !== undefined && job.eta !== null && (
+              <span>ETA: {formatTime(job.eta)}</span>
+            )}
           </div>
         </div>
       )}
@@ -183,14 +196,30 @@ function JobCard({ job, lang, onUpdate }: JobCardProps) {
   );
 }
 
+/**
+ * Format time in a human-friendly way
+ * @param seconds - Time in seconds
+ * @returns Formatted time string
+ */
 function formatTime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
+  if (!seconds || seconds <= 0) return '< 1 min';
+  
+  // Round to nearest 5 seconds for smoother display
+  seconds = Math.round(seconds / 5) * 5;
+  
+  if (seconds < 30) return '< 1 min';
+  if (seconds < 60) return '~1 min';
+  
   if (seconds < 3600) {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}m ${secs}s`;
+    const mins = Math.round(seconds / 60);
+    return `~${mins} min${mins > 1 ? 's' : ''}`;
   }
+  
   const hours = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  return `${hours}h ${mins}m`;
+  const mins = Math.round((seconds % 3600) / 60);
+  
+  if (mins === 0) {
+    return `~${hours}h`;
+  }
+  return `~${hours}h ${mins}m`;
 }

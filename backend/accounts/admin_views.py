@@ -291,6 +291,32 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             'message': '2FA disabled for user.',
             'user': AdminUserSerializer(user).data
         })
+    
+    @action(detail=True, methods=['post'])
+    def reset_password(self, request, pk=None):
+        """Reset password for a user (admin override)."""
+        user = self.get_object()
+        new_password = request.data.get('new_password')
+        
+        if not new_password:
+            return Response(
+                {'detail': 'New password is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if len(new_password) < 8:
+            return Response(
+                {'detail': 'Password must be at least 8 characters.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+        
+        return Response({
+            'message': 'Password reset successfully.',
+            'user': AdminUserSerializer(user).data
+        })
 
 
 # =============================================================================
@@ -300,26 +326,51 @@ class AdminUserViewSet(viewsets.ModelViewSet):
 class AdminFilesView(generics.ListAPIView):
     """
     List all conversion jobs/files with admin access.
+    Supports filtering by view mode: completed, in_progress, failed, all
     """
     permission_classes = [IsAuthenticated, IsAdminUser]
     
+    def get_counts(self):
+        """Get counts for each view mode."""
+        base_qs = ConversionJob.objects.all()
+        return {
+            'completed': base_qs.filter(status='completed').count(),
+            'in_progress': base_qs.filter(status__in=['pending', 'queued', 'analyzing', 'processing']).count(),
+            'failed': base_qs.filter(status__in=['failed', 'cancelled']).count(),
+            'all': base_qs.count(),
+        }
+    
     def get_queryset(self):
         queryset = ConversionJob.objects.select_related('user').order_by('-created_at')
+        
+        # Filter by view mode
+        view_mode = self.request.query_params.get('view', 'completed')
+        if view_mode == 'completed':
+            queryset = queryset.filter(status='completed')
+        elif view_mode == 'in_progress':
+            queryset = queryset.filter(status__in=['pending', 'queued', 'analyzing', 'processing'])
+        elif view_mode == 'failed':
+            queryset = queryset.filter(status__in=['failed', 'cancelled'])
+        # 'all' shows everything
         
         # Filter by user
         user_id = self.request.query_params.get('user_id', '')
         if user_id:
             queryset = queryset.filter(user_id=user_id)
         
-        # Filter by status
+        # Filter by status (additional filter)
         status_filter = self.request.query_params.get('status', '')
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         
-        # Search by filename
+        # Search by filename or user
         search = self.request.query_params.get('search', '')
         if search:
-            queryset = queryset.filter(original_filename__icontains=search)
+            queryset = queryset.filter(
+                Q(original_filename__icontains=search) |
+                Q(user__email__icontains=search) |
+                Q(user__username__icontains=search)
+            )
         
         return queryset
     
@@ -352,6 +403,8 @@ class AdminFilesView(generics.ListAPIView):
             'progress': job.progress,
             'created_at': job.created_at.isoformat(),
             'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+            'task_id': job.task_id if hasattr(job, 'task_id') else None,
+            'is_orphaned': job.status in ['failed', 'cancelled'] and not job.output_file_size,
         } for job in jobs]
         
         return Response({
@@ -360,6 +413,7 @@ class AdminFilesView(generics.ListAPIView):
             'page': page,
             'page_size': page_size,
             'total_pages': (total + page_size - 1) // page_size,
+            'counts': self.get_counts(),
         })
 
 
@@ -472,4 +526,179 @@ class AdminBrandingView(APIView):
             'logo': settings_obj.logo,
             'primary_color': settings_obj.primary_color,
             'secondary_color': settings_obj.secondary_color,
+        })
+
+
+# =============================================================================
+# Task Management
+# =============================================================================
+
+class AdminTasksView(APIView):
+    """
+    List all conversion tasks with their status.
+    Links tasks to jobs and shows orphaned files.
+    """
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    
+    def get(self, request):
+        from celery.result import AsyncResult
+        from mkv2cast_api.celery import app
+        
+        # Get all jobs
+        jobs = ConversionJob.objects.select_related('user').order_by('-created_at')
+        
+        # Filter by status
+        status_filter = request.query_params.get('status', '')
+        if status_filter == 'running':
+            jobs = jobs.filter(status__in=['pending', 'queued', 'analyzing', 'processing'])
+        elif status_filter == 'completed':
+            jobs = jobs.filter(status='completed')
+        elif status_filter == 'failed':
+            jobs = jobs.filter(status__in=['failed', 'cancelled'])
+        
+        # Pagination
+        page_size = int(request.query_params.get('page_size', 20))
+        page = int(request.query_params.get('page', 1))
+        
+        total = jobs.count()
+        start = (page - 1) * page_size
+        end = start + page_size
+        
+        tasks = []
+        for job in jobs[start:end]:
+            task_info = {
+                'id': str(job.id),
+                'task_id': job.task_id,
+                'user': {
+                    'id': job.user.id,
+                    'email': job.user.email,
+                    'username': job.user.username,
+                },
+                'original_filename': job.original_filename,
+                'status': job.status,
+                'progress': job.progress,
+                'current_stage': job.current_stage,
+                'started_at': job.started_at.isoformat() if job.started_at else None,
+                'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                'created_at': job.created_at.isoformat(),
+                'error_message': job.error_message,
+                'duration_ms': job.duration_ms,
+                'is_orphaned': False,
+            }
+            
+            # Check if task is orphaned (has task_id but celery task is gone)
+            if job.task_id and job.status in ['pending', 'queued', 'analyzing', 'processing']:
+                try:
+                    result = AsyncResult(job.task_id, app=app)
+                    if result.state == 'PENDING':
+                        # Task might be gone from broker
+                        task_info['is_orphaned'] = True
+                except Exception:
+                    task_info['is_orphaned'] = True
+            
+            tasks.append(task_info)
+        
+        # Get counts
+        counts = {
+            'running': ConversionJob.objects.filter(status__in=['pending', 'queued', 'analyzing', 'processing']).count(),
+            'completed': ConversionJob.objects.filter(status='completed').count(),
+            'failed': ConversionJob.objects.filter(status__in=['failed', 'cancelled']).count(),
+            'all': ConversionJob.objects.count(),
+        }
+        
+        return Response({
+            'results': tasks,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': (total + page_size - 1) // page_size,
+            'counts': counts,
+        })
+
+
+class AdminTaskCancelView(APIView):
+    """
+    Cancel a running task.
+    """
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    
+    def post(self, request, job_id):
+        try:
+            job = ConversionJob.objects.get(id=job_id)
+        except ConversionJob.DoesNotExist:
+            return Response(
+                {'detail': 'Job not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if job.status not in ['pending', 'queued', 'analyzing', 'processing']:
+            return Response(
+                {'detail': 'Job is not running.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Cancel celery task if exists
+        if job.task_id:
+            try:
+                from celery.result import AsyncResult
+                from mkv2cast_api.celery import app
+                
+                result = AsyncResult(job.task_id, app=app)
+                result.revoke(terminate=True, signal='SIGTERM')
+            except Exception as e:
+                pass  # Task might already be gone
+        
+        # Update job status
+        job.status = 'cancelled'
+        job.completed_at = timezone.now()
+        job.error_message = 'Cancelled by administrator'
+        job.save(update_fields=['status', 'completed_at', 'error_message'])
+        
+        return Response({
+            'message': 'Task cancelled successfully.',
+            'job_id': str(job.id),
+        })
+
+
+class AdminTaskRetryView(APIView):
+    """
+    Retry a failed task.
+    """
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    
+    def post(self, request, job_id):
+        try:
+            job = ConversionJob.objects.get(id=job_id)
+        except ConversionJob.DoesNotExist:
+            return Response(
+                {'detail': 'Job not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if job.status not in ['failed', 'cancelled']:
+            return Response(
+                {'detail': 'Only failed or cancelled jobs can be retried.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Reset job status
+        job.status = 'pending'
+        job.progress = 0
+        job.error_message = ''
+        job.started_at = None
+        job.completed_at = None
+        job.current_stage = ''
+        job.save()
+        
+        # Re-queue the task
+        from conversions.tasks import run_conversion
+        task = run_conversion.delay(str(job.id))
+        
+        job.task_id = task.id
+        job.save(update_fields=['task_id'])
+        
+        return Response({
+            'message': 'Task queued for retry.',
+            'job_id': str(job.id),
+            'task_id': task.id,
         })

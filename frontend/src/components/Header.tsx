@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useTranslations } from '@/lib/i18n';
 import { useRequireAuth, useCurrentUser } from '@/hooks/useAuthConfig';
 import { 
@@ -23,7 +23,8 @@ import {
   FileText,
   Server,
   Cpu,
-  Info
+  Info,
+  History
 } from 'lucide-react';
 
 const languages = [
@@ -40,6 +41,7 @@ interface HeaderProps {
 
 export function Header({ lang }: HeaderProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const { data: session } = useSession();
   const { requireAuth, config } = useRequireAuth();
   const { data: localUser } = useCurrentUser();
@@ -56,6 +58,24 @@ export function Header({ lang }: HeaderProps) {
   const user = localUser || config?.user || session?.user;
   const isAuthenticated = isLocalMode || !!session || !!localUser;
   const isAdmin = localUser?.is_admin || config?.user?.is_admin || false;
+
+  // Helper to check if a route is active
+  const isActiveRoute = (path: string) => {
+    if (path === `/${lang}`) {
+      return pathname === `/${lang}` || pathname === `/${lang}/`;
+    }
+    return pathname.startsWith(path);
+  };
+
+  // Helper to get nav link classes
+  const getNavLinkClasses = (path: string) => {
+    const isActive = isActiveRoute(path);
+    return `transition-colors ${
+      isActive 
+        ? 'text-white font-medium border-b-2 border-primary-400 pb-0.5' 
+        : 'text-surface-300 hover:text-white'
+    }`;
+  };
 
   const handleLogout = async () => {
     // Clear local token
@@ -137,9 +157,11 @@ export function Header({ lang }: HeaderProps) {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link href={`/${lang}`} className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center">
-              <span className="text-white font-bold text-sm">M2C</span>
-            </div>
+            <img
+              src="/mkv2cast-logo.svg"
+              alt="mkv2cast logo"
+              className="w-8 h-8 sm:w-9 sm:h-9"
+            />
             <span className="text-xl font-bold text-white hidden sm:block">mkv2cast</span>
           </Link>
 
@@ -147,13 +169,13 @@ export function Header({ lang }: HeaderProps) {
           <nav className="hidden md:flex items-center gap-6">
             <Link
               href={`/${lang}`}
-              className="text-surface-300 hover:text-white transition-colors"
+              className={getNavLinkClasses(`/${lang}`)}
             >
               {t('nav.convert')}
             </Link>
             <Link
               href={`/${lang}/history`}
-              className="text-surface-300 hover:text-white transition-colors"
+              className={getNavLinkClasses(`/${lang}/history`)}
             >
               {t('nav.history')}
             </Link>
@@ -240,7 +262,7 @@ export function Header({ lang }: HeaderProps) {
               {langMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setLangMenuOpen(false)} />
-                  <div className="absolute right-0 mt-2 w-40 glass rounded-xl shadow-xl py-2 animate-fade-in z-20">
+                  <div className="absolute right-0 mt-2 w-40 glass-dropdown-light rounded-xl shadow-xl py-2 animate-fade-in z-20">
                     {languages.map((language) => (
                       <Link
                         key={language.code}
@@ -288,7 +310,7 @@ export function Header({ lang }: HeaderProps) {
                 {userMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setUserMenuOpen(false)} />
-                    <div className="absolute right-0 mt-2 w-56 glass rounded-xl shadow-xl py-2 animate-fade-in z-20">
+                    <div className="absolute right-0 mt-2 w-56 glass-dropdown-light rounded-xl shadow-xl py-2 animate-fade-in z-20">
                       <div className="px-4 py-3 border-b border-surface-700">
                         <p className="text-sm font-medium text-white">
                           {user?.username || user?.name || 'User'}

@@ -13,20 +13,45 @@ import {
   HardDrive,
   Cpu,
   Users,
+  Mail,
+  Key,
+  Send,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 
 interface SiteSettings {
+  // Defaults
   site_name: string;
   site_tagline: string;
   default_container: string;
   default_hw_backend: string;
   default_quality_preset: string;
   max_file_size: number;
+  // Server
   maintenance_mode: boolean;
   maintenance_message: string;
   allow_registration: boolean;
   require_email_verification: boolean;
+  // Auth
+  require_auth: boolean;
+  google_client_id: string;
+  google_client_secret: string;
+  google_configured: boolean;
+  github_client_id: string;
+  github_client_secret: string;
+  github_configured: boolean;
+  // SMTP
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  smtp_password: string;
+  smtp_password_set: boolean;
+  smtp_use_tls: boolean;
+  smtp_use_ssl: boolean;
+  smtp_from_email: string;
+  smtp_from_name: string;
 }
 
 function formatBytes(bytes: number): string {
@@ -45,8 +70,14 @@ export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [showSecrets, setShowSecrets] = useState({
+    google: false,
+    github: false,
+    smtp: false,
+  });
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -80,7 +111,8 @@ export default function AdminSettingsPage() {
     setSuccess('');
 
     try {
-      await api.put('/api/admin/settings/', settings);
+      const response = await api.put('/api/admin/settings/', settings);
+      setSettings(response.data);
       setSuccess('Settings saved successfully');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
@@ -94,6 +126,20 @@ export default function AdminSettingsPage() {
       }
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleTestSMTP = async () => {
+    setIsTesting(true);
+    setError('');
+    try {
+      await api.post('/api/admin/settings/test-smtp/');
+      setSuccess('Test email sent successfully! Check your inbox.');
+      setTimeout(() => setSuccess(''), 5000);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to send test email. Check SMTP configuration.');
+    } finally {
+      setIsTesting(false);
     }
   };
 
@@ -124,7 +170,7 @@ export default function AdminSettingsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Server Settings</h1>
-          <p className="text-surface-400 mt-1">Configure default conversion settings and server options</p>
+          <p className="text-surface-400 mt-1">Configure server options, authentication, and email settings</p>
         </div>
         <button
           onClick={handleSave}
@@ -256,6 +302,22 @@ export default function AdminSettingsPage() {
           <div className="space-y-4">
             <div className="flex items-center justify-between p-4 bg-surface-800/50 rounded-lg">
               <div>
+                <p className="text-white font-medium">Require Authentication</p>
+                <p className="text-surface-400 text-sm">Disable for local-only access</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.require_auth}
+                  onChange={(e) => handleChange('require_auth', e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-surface-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-500"></div>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-surface-800/50 rounded-lg">
+              <div>
                 <p className="text-white font-medium">Allow Registration</p>
                 <p className="text-surface-400 text-sm">Enable new user sign-ups</p>
               </div>
@@ -288,11 +350,247 @@ export default function AdminSettingsPage() {
           </div>
         </motion.div>
 
-        {/* Maintenance Mode */}
+        {/* OAuth Configuration */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
+          className="glass rounded-xl p-6"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 rounded-lg bg-blue-500/10">
+              <Key className="w-5 h-5 text-blue-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-white">OAuth Providers</h2>
+          </div>
+
+          <div className="space-y-6">
+            {/* Google */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-white font-medium">Google OAuth</h3>
+                {settings.google_configured && (
+                  <span className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded">
+                    Configured
+                  </span>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">Client ID</label>
+                <input
+                  type="text"
+                  value={settings.google_client_id}
+                  onChange={(e) => handleChange('google_client_id', e.target.value)}
+                  placeholder="xxxx.apps.googleusercontent.com"
+                  className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">Client Secret</label>
+                <div className="relative">
+                  <input
+                    type={showSecrets.google ? 'text' : 'password'}
+                    value={settings.google_client_secret}
+                    onChange={(e) => handleChange('google_client_secret', e.target.value)}
+                    placeholder={settings.google_configured ? '••••••••••••••••' : 'Enter secret'}
+                    className="w-full px-3 py-2 pr-10 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSecrets(s => ({ ...s, google: !s.google }))}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-surface-500 hover:text-white"
+                  >
+                    {showSecrets.google ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* GitHub */}
+            <div className="space-y-3 pt-4 border-t border-surface-700">
+              <div className="flex items-center justify-between">
+                <h3 className="text-white font-medium">GitHub OAuth</h3>
+                {settings.github_configured && (
+                  <span className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded">
+                    Configured
+                  </span>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">Client ID</label>
+                <input
+                  type="text"
+                  value={settings.github_client_id}
+                  onChange={(e) => handleChange('github_client_id', e.target.value)}
+                  placeholder="Iv1.xxxxxxxxxxxx"
+                  className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">Client Secret</label>
+                <div className="relative">
+                  <input
+                    type={showSecrets.github ? 'text' : 'password'}
+                    value={settings.github_client_secret}
+                    onChange={(e) => handleChange('github_client_secret', e.target.value)}
+                    placeholder={settings.github_configured ? '••••••••••••••••' : 'Enter secret'}
+                    className="w-full px-3 py-2 pr-10 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSecrets(s => ({ ...s, github: !s.github }))}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-surface-500 hover:text-white"
+                  >
+                    {showSecrets.github ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* SMTP Configuration */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="glass rounded-xl p-6"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 rounded-lg bg-purple-500/10">
+              <Mail className="w-5 h-5 text-purple-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-white">Email (SMTP)</h2>
+            {settings.smtp_password_set && (
+              <span className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded">
+                Configured
+              </span>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">SMTP Host</label>
+                <input
+                  type="text"
+                  value={settings.smtp_host}
+                  onChange={(e) => handleChange('smtp_host', e.target.value)}
+                  placeholder="smtp.example.com"
+                  className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">Port</label>
+                <input
+                  type="number"
+                  value={settings.smtp_port}
+                  onChange={(e) => handleChange('smtp_port', parseInt(e.target.value) || 587)}
+                  className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm text-surface-400 mb-1">Username</label>
+              <input
+                type="text"
+                value={settings.smtp_username}
+                onChange={(e) => handleChange('smtp_username', e.target.value)}
+                placeholder="your-email@example.com"
+                className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-surface-400 mb-1">Password</label>
+              <div className="relative">
+                <input
+                  type={showSecrets.smtp ? 'text' : 'password'}
+                  value={settings.smtp_password}
+                  onChange={(e) => handleChange('smtp_password', e.target.value)}
+                  placeholder={settings.smtp_password_set ? '••••••••••••••••' : 'Enter password'}
+                  className="w-full px-3 py-2 pr-10 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSecrets(s => ({ ...s, smtp: !s.smtp }))}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-surface-500 hover:text-white"
+                >
+                  {showSecrets.smtp ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">From Email</label>
+                <input
+                  type="email"
+                  value={settings.smtp_from_email}
+                  onChange={(e) => handleChange('smtp_from_email', e.target.value)}
+                  placeholder="noreply@example.com"
+                  className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">From Name</label>
+                <input
+                  type="text"
+                  value={settings.smtp_from_name}
+                  onChange={(e) => handleChange('smtp_from_name', e.target.value)}
+                  placeholder="mkv2cast"
+                  className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-6 pt-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.smtp_use_tls}
+                  onChange={(e) => handleChange('smtp_use_tls', e.target.checked)}
+                  className="w-4 h-4 rounded border-surface-600 bg-surface-800 text-primary-500"
+                />
+                <span className="text-sm text-surface-300">Use TLS</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.smtp_use_ssl}
+                  onChange={(e) => handleChange('smtp_use_ssl', e.target.checked)}
+                  className="w-4 h-4 rounded border-surface-600 bg-surface-800 text-primary-500"
+                />
+                <span className="text-sm text-surface-300">Use SSL</span>
+              </label>
+            </div>
+
+            <button
+              onClick={handleTestSMTP}
+              disabled={isTesting || !settings.smtp_host}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors disabled:opacity-50"
+            >
+              {isTesting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4" />
+                  Send Test Email
+                </>
+              )}
+            </button>
+          </div>
+        </motion.div>
+
+        {/* Maintenance Mode */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
           className="glass rounded-xl p-6 lg:col-span-2"
         >
           <div className="flex items-center gap-3 mb-6">

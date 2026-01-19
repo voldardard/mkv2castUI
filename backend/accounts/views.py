@@ -1,6 +1,7 @@
 """
 Views for user authentication and profile management.
 """
+import os
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -73,20 +74,51 @@ def current_user(request):
 @permission_classes([AllowAny])
 def oauth_providers(request):
     """
-    Get available OAuth providers.
+    Get available OAuth providers based on configuration.
+    Only returns providers that have their client IDs configured.
+    Checks database settings first, then environment variables.
     """
-    providers = [
-        {
+    providers = []
+    
+    # Get site settings
+    site_settings = SiteSettings.get_settings()
+    
+    # Check if Google OAuth is configured
+    google_client_id = site_settings.google_client_id
+    if not google_client_id:
+        google_client_id = getattr(settings, 'SOCIALACCOUNT_PROVIDERS', {}).get('google', {}).get('APP', {}).get('client_id', '')
+    if not google_client_id:
+        google_client_id = getattr(settings, 'GOOGLE_CLIENT_ID', '') or os.environ.get('GOOGLE_CLIENT_ID', '')
+    
+    google_client_secret = site_settings.google_client_secret
+    if not google_client_secret:
+        google_client_secret = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+    
+    if google_client_id and google_client_secret:
+        providers.append({
             'id': 'google',
             'name': 'Google',
             'url': '/accounts/google/login/',
-        },
-        {
+        })
+    
+    # Check if GitHub OAuth is configured
+    github_client_id = site_settings.github_client_id
+    if not github_client_id:
+        github_client_id = getattr(settings, 'SOCIALACCOUNT_PROVIDERS', {}).get('github', {}).get('APP', {}).get('client_id', '')
+    if not github_client_id:
+        github_client_id = getattr(settings, 'GITHUB_CLIENT_ID', '') or os.environ.get('GITHUB_CLIENT_ID', '')
+    
+    github_client_secret = site_settings.github_client_secret
+    if not github_client_secret:
+        github_client_secret = os.environ.get('GITHUB_CLIENT_SECRET', '')
+    
+    if github_client_id and github_client_secret:
+        providers.append({
             'id': 'github',
             'name': 'GitHub',
             'url': '/accounts/github/login/',
-        },
-    ]
+        })
+    
     return Response(providers)
 
 
@@ -98,13 +130,22 @@ def auth_config(request):
     
     Returns whether authentication is required and the current user info
     if authentication is disabled.
+    
+    Settings are loaded from database first, then environment variables as fallback.
     """
-    require_auth = getattr(settings, 'REQUIRE_AUTH', True)
     site_settings = SiteSettings.get_settings()
+    
+    # Check require_auth from database first, then env
+    require_auth = site_settings.require_auth
+    # Allow environment variable to override (for initial setup)
+    env_require_auth = os.environ.get('REQUIRE_AUTH', '').lower()
+    if env_require_auth in ('false', '0', 'no'):
+        require_auth = False
+    elif env_require_auth in ('true', '1', 'yes'):
+        require_auth = True
     
     response_data = {
         'require_auth': require_auth,
-        'providers': ['google', 'github'] if require_auth else [],
         'allow_registration': site_settings.allow_registration,
         'site_name': site_settings.site_name,
     }

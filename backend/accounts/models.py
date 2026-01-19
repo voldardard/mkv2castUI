@@ -365,7 +365,28 @@ class SiteSettings(models.Model):
         blank=True
     )
     allow_registration = models.BooleanField(default=True)
-    require_email_verification = models.BooleanField(default=False)
+    require_email_verification = models.BooleanField(default=True)
+    
+    # ==========================================================================
+    # Authentication Settings
+    # ==========================================================================
+    require_auth = models.BooleanField(default=True)
+    google_client_id = models.CharField(max_length=255, blank=True)
+    google_client_secret = models.CharField(max_length=255, blank=True)
+    github_client_id = models.CharField(max_length=255, blank=True)
+    github_client_secret = models.CharField(max_length=255, blank=True)
+    
+    # ==========================================================================
+    # SMTP Configuration
+    # ==========================================================================
+    smtp_host = models.CharField(max_length=255, blank=True)
+    smtp_port = models.IntegerField(default=587)
+    smtp_username = models.CharField(max_length=255, blank=True)
+    smtp_password = models.CharField(max_length=255, blank=True)
+    smtp_use_tls = models.BooleanField(default=True)
+    smtp_use_ssl = models.BooleanField(default=False)
+    smtp_from_email = models.EmailField(blank=True)
+    smtp_from_name = models.CharField(max_length=100, default='mkv2cast', blank=True)
     
     # ==========================================================================
     # Timestamps

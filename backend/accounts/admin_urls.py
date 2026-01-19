@@ -20,6 +20,11 @@ urlpatterns = [
     path('files/', admin_views.AdminFilesView.as_view(), name='admin-files'),
     path('files/<uuid:job_id>/', admin_views.AdminFileDeleteView.as_view(), name='admin-file-delete'),
     
+    # Task management
+    path('tasks/', admin_views.AdminTasksView.as_view(), name='admin-tasks'),
+    path('tasks/<uuid:job_id>/cancel/', admin_views.AdminTaskCancelView.as_view(), name='admin-task-cancel'),
+    path('tasks/<uuid:job_id>/retry/', admin_views.AdminTaskRetryView.as_view(), name='admin-task-retry'),
+    
     # Site settings
     path('settings/', admin_views.AdminSiteSettingsView.as_view(), name='admin-settings'),
     path('branding/', admin_views.AdminBrandingView.as_view(), name='admin-branding'),

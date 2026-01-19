@@ -17,6 +17,10 @@ import {
   AlertCircle,
   Download,
   CheckCircle2,
+  Eye,
+  EyeOff,
+  FileWarning,
+  Link2Off,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 
@@ -36,6 +40,8 @@ interface ConversionFile {
   progress: number;
   created_at: string;
   completed_at: string | null;
+  task_id?: string | null;
+  is_orphaned?: boolean;
 }
 
 function formatBytes(bytes: number): string {
@@ -56,6 +62,8 @@ const statusConfig: Record<string, { icon: any; color: string; bg: string }> = {
   cancelled: { icon: XCircle, color: 'text-surface-400', bg: 'bg-surface-500/10' },
 };
 
+type ViewMode = 'completed' | 'in_progress' | 'failed' | 'all';
+
 export default function AdminFilesPage() {
   const params = useParams();
   const lang = params.lang as string || 'en';
@@ -63,10 +71,15 @@ export default function AdminFilesPage() {
   const [files, setFiles] = useState<ConversionFile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('completed');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState({
+    completed: 0,
+    in_progress: 0,
+    failed: 0,
+    all: 0,
+  });
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -77,13 +90,22 @@ export default function AdminFilesPage() {
     try {
       const queryParams = new URLSearchParams();
       if (search) queryParams.append('search', search);
-      if (statusFilter) queryParams.append('status', statusFilter);
+      queryParams.append('view', viewMode);
       queryParams.append('page', page.toString());
       
       const response = await api.get(`/api/admin/files/?${queryParams.toString()}`);
       setFiles(response.data.results || response.data);
-      setTotal(response.data.total || response.data.length || 0);
       setTotalPages(response.data.total_pages || 1);
+      
+      // Update counts if provided
+      if (response.data.counts) {
+        setCounts(response.data.counts);
+      } else {
+        setCounts(prev => ({
+          ...prev,
+          [viewMode]: response.data.total || response.data.length || 0,
+        }));
+      }
     } catch (err: any) {
       const status = err.response?.status;
       if (status === 403) {
@@ -101,7 +123,7 @@ export default function AdminFilesPage() {
   useEffect(() => {
     fetchFiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, statusFilter, page]);
+  }, [search, viewMode, page]);
 
   const showSuccess = (message: string) => {
     setSuccess(message);
@@ -135,13 +157,20 @@ export default function AdminFilesPage() {
     return `/api/jobs/${fileId}/download/`;
   };
 
+  const viewModeLabels: Record<ViewMode, { label: string; icon: React.ElementType }> = {
+    completed: { label: 'Completed', icon: CheckCircle },
+    in_progress: { label: 'In Progress', icon: Loader2 },
+    failed: { label: 'Failed/Orphaned', icon: FileWarning },
+    all: { label: 'All Files', icon: Eye },
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-white">Files</h1>
         <p className="text-surface-400 mt-1">
-          Manage uploaded and converted files ({total} total)
+          Manage uploaded and converted files
         </p>
       </div>
 
@@ -159,7 +188,44 @@ export default function AdminFilesPage() {
         </div>
       )}
 
-      {/* Filters */}
+      {/* View Mode Tabs */}
+      <div className="flex flex-wrap gap-2">
+        {(Object.keys(viewModeLabels) as ViewMode[]).map((mode) => {
+          const { label, icon: Icon } = viewModeLabels[mode];
+          const isActive = viewMode === mode;
+          const count = counts[mode];
+          
+          return (
+            <button
+              key={mode}
+              onClick={() => {
+                setViewMode(mode);
+                setPage(1);
+              }}
+              className={`
+                flex items-center gap-2 px-4 py-2 rounded-lg transition-all
+                ${isActive 
+                  ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30' 
+                  : 'bg-surface-800/50 text-surface-400 border border-surface-700 hover:bg-surface-800'
+                }
+              `}
+            >
+              <Icon className={`w-4 h-4 ${mode === 'in_progress' && isActive ? 'animate-spin' : ''}`} />
+              <span>{label}</span>
+              {count > 0 && (
+                <span className={`
+                  text-xs px-1.5 py-0.5 rounded-full
+                  ${isActive ? 'bg-primary-500/30' : 'bg-surface-700'}
+                `}>
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Search */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-surface-500" />
@@ -167,24 +233,10 @@ export default function AdminFilesPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by filename..."
+            placeholder="Search by filename or user..."
             className="w-full pl-10 pr-4 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white placeholder-surface-500 focus:border-primary-500 focus:outline-none"
           />
         </div>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-4 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white focus:border-primary-500 focus:outline-none"
-        >
-          <option value="">All Status</option>
-          <option value="pending">Pending</option>
-          <option value="queued">Queued</option>
-          <option value="analyzing">Analyzing</option>
-          <option value="processing">Processing</option>
-          <option value="completed">Completed</option>
-          <option value="failed">Failed</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
       </div>
 
       {/* Files Table */}
@@ -201,6 +253,12 @@ export default function AdminFilesPage() {
           <div className="flex flex-col items-center justify-center h-64 text-surface-400">
             <FileVideo className="w-12 h-12 mb-4" />
             <p>No files found</p>
+            <p className="text-sm mt-1">
+              {viewMode === 'completed' ? 'No completed conversions yet' : 
+               viewMode === 'in_progress' ? 'No files currently processing' :
+               viewMode === 'failed' ? 'No failed or orphaned files' :
+               'No files in the system'}
+            </p>
           </div>
         ) : (
           <>
@@ -222,17 +280,23 @@ export default function AdminFilesPage() {
                     const status = statusConfig[file.status] || statusConfig.pending;
                     const StatusIcon = status.icon;
                     const isProcessing = file.status === 'processing' || file.status === 'analyzing';
+                    const isOrphaned = file.is_orphaned || (file.status === 'failed' && !file.task_id);
                     
                     return (
-                      <tr key={file.id} className="hover:bg-surface-800/30 transition-colors">
+                      <tr key={file.id} className={`hover:bg-surface-800/30 transition-colors ${isOrphaned ? 'opacity-75' : ''}`}>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             <div className={`p-2 rounded-lg ${status.bg}`}>
                               <FileVideo className={`w-5 h-5 ${status.color}`} />
                             </div>
                             <div className="min-w-0">
-                              <p className="text-white font-medium truncate max-w-xs" title={file.original_filename}>
+                              <p className="text-white font-medium truncate max-w-xs flex items-center gap-2" title={file.original_filename}>
                                 {file.original_filename}
+                                {isOrphaned && (
+                                  <span title="Orphaned file - no active task">
+                                    <Link2Off className="w-4 h-4 text-yellow-400" />
+                                  </span>
+                                )}
                               </p>
                               <p className="text-surface-500 text-xs">{file.id.slice(0, 8)}...</p>
                             </div>

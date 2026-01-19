@@ -467,10 +467,19 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
     Serializer for site settings.
     """
     logo = serializers.ReadOnlyField()
+    # Don't expose secrets in responses - write-only
+    smtp_password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    google_client_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    github_client_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # Indicate if secrets are set
+    smtp_password_set = serializers.SerializerMethodField()
+    google_configured = serializers.SerializerMethodField()
+    github_configured = serializers.SerializerMethodField()
     
     class Meta:
         model = SiteSettings
         fields = [
+            # Branding
             'site_name',
             'site_tagline',
             'logo_url',
@@ -479,17 +488,57 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             'favicon_file',
             'primary_color',
             'secondary_color',
+            # Defaults
             'default_container',
             'default_hw_backend',
             'default_quality_preset',
             'max_file_size',
+            # Server settings
             'maintenance_mode',
             'maintenance_message',
             'allow_registration',
             'require_email_verification',
+            # Auth settings
+            'require_auth',
+            'google_client_id',
+            'google_client_secret',
+            'google_configured',
+            'github_client_id',
+            'github_client_secret',
+            'github_configured',
+            # SMTP
+            'smtp_host',
+            'smtp_port',
+            'smtp_username',
+            'smtp_password',
+            'smtp_password_set',
+            'smtp_use_tls',
+            'smtp_use_ssl',
+            'smtp_from_email',
+            'smtp_from_name',
+            # Timestamps
             'updated_at',
         ]
-        read_only_fields = ['updated_at', 'logo']
+        read_only_fields = ['updated_at', 'logo', 'smtp_password_set', 'google_configured', 'github_configured']
+    
+    def get_smtp_password_set(self, obj):
+        return bool(obj.smtp_password)
+    
+    def get_google_configured(self, obj):
+        return bool(obj.google_client_id and obj.google_client_secret)
+    
+    def get_github_configured(self, obj):
+        return bool(obj.github_client_id and obj.github_client_secret)
+    
+    def update(self, instance, validated_data):
+        # Only update secrets if provided (don't clear on empty)
+        if 'smtp_password' in validated_data and not validated_data['smtp_password']:
+            validated_data.pop('smtp_password')
+        if 'google_client_secret' in validated_data and not validated_data['google_client_secret']:
+            validated_data.pop('google_client_secret')
+        if 'github_client_secret' in validated_data and not validated_data['github_client_secret']:
+            validated_data.pop('github_client_secret')
+        return super().update(instance, validated_data)
 
 
 class PublicSiteSettingsSerializer(serializers.ModelSerializer):

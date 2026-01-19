@@ -15,6 +15,7 @@ import {
   X,
   Loader2,
   Shield,
+  ListTodo,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 
@@ -34,7 +35,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const router = useRouter();
   const pathname = usePathname();
   const lang = params.lang as string || 'en';
-  const { data: session, status } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -44,17 +45,23 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   useEffect(() => {
     const checkAdminAccess = async () => {
       try {
-        // Get token from localStorage
+        // Get token from localStorage (for local auth)
         const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
         
-        if (!token) {
+        // If no local token and no SSO session, redirect to login
+        if (!token && sessionStatus === 'unauthenticated') {
           router.push(`/${lang}/auth/login`);
           return;
         }
         
-        const response = await api.get('/api/auth/me/', {
-          headers: { Authorization: `Token ${token}` }
-        });
+        // If still loading SSO session, wait
+        if (sessionStatus === 'loading') {
+          return;
+        }
+        
+        // Try to get user info - the api interceptor adds the token automatically
+        // For SSO users, the backend should recognize them via session cookie
+        const response = await api.get('/api/auth/me/');
         const user = response.data;
         
         if (!user.is_admin) {
@@ -63,24 +70,25 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         }
         
         setCurrentUser(user);
+        setIsLoading(false);
       } catch (err) {
-        // Token invalid, remove it
+        console.error('Admin access check failed:', err);
+        // Token invalid or no auth, redirect to login
         if (typeof window !== 'undefined') {
           localStorage.removeItem('token');
         }
         router.push(`/${lang}/auth/login`);
-      } finally {
-        setIsLoading(false);
       }
     };
 
     checkAdminAccess();
-  }, [lang, router]);
+  }, [lang, router, sessionStatus]);
 
   const navigation = [
     { name: 'Dashboard', href: `/${lang}/admin`, icon: LayoutDashboard },
     { name: 'Users', href: `/${lang}/admin/users`, icon: Users },
     { name: 'Files', href: `/${lang}/admin/files`, icon: FileVideo },
+    { name: 'Tasks', href: `/${lang}/admin/tasks`, icon: ListTodo },
     { name: 'Settings', href: `/${lang}/admin/settings`, icon: Settings },
     { name: 'Branding', href: `/${lang}/admin/branding`, icon: Palette },
   ];
@@ -92,7 +100,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     return pathname.startsWith(href);
   };
 
-  if (isLoading) {
+  if (isLoading || sessionStatus === 'loading') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-surface-950">
         <Loader2 className="w-8 h-8 animate-spin text-primary-500" />

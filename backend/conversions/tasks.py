@@ -20,9 +20,18 @@ from django.conf import settings
 from .models import ConversionJob, ConversionLog
 
 
-def send_progress_update(job_id: str, progress: int, status: str, stage: str = '', eta: int = None, error: str = ''):
+def send_progress_update(job_id: str, progress: int, status: str, stage: str = '', eta: int = None, error: str = '', speed: float = None):
     """
     Send progress update via WebSocket to connected clients.
+    
+    Args:
+        job_id: The job ID
+        progress: Progress percentage (0-100)
+        status: Job status
+        stage: Current processing stage
+        eta: Estimated time remaining in seconds
+        error: Error message if failed
+        speed: Encoding speed multiplier (e.g., 1.5x means 1.5 times realtime)
     """
     channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
@@ -34,6 +43,7 @@ def send_progress_update(job_id: str, progress: int, status: str, stage: str = '
             'stage': stage,
             'eta': eta,
             'error': error,
+            'speed': speed,
         }
     )
 
@@ -358,16 +368,37 @@ def run_conversion(self, job_id: str):
         )
         
         last_progress = 0
+        current_speed = None
+        speed_history = []  # Rolling window for speed averaging
+        last_time_ms = 0
+        last_check_time = timezone.now()
+        
         for line in process.stdout:
-            # Check if job was cancelled
-            job.refresh_from_db()
-            if job.status == 'cancelled':
-                process.terminate()
-                process.wait()
-                if os.path.exists(output_path):
-                    os.remove(output_path)
-                add_log(job, 'info', 'Conversion cancelled by user')
-                raise Ignore()
+            # Check if job was cancelled (every few lines to reduce DB hits)
+            if 'progress=' in line:
+                job.refresh_from_db()
+                if job.status == 'cancelled':
+                    process.terminate()
+                    process.wait()
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                    add_log(job, 'info', 'Conversion cancelled by user')
+                    raise Ignore()
+            
+            # Parse speed from ffmpeg output
+            if 'speed=' in line:
+                try:
+                    speed_str = line.split('=')[1].strip().rstrip('x')
+                    if speed_str and speed_str != 'N/A':
+                        speed_val = float(speed_str)
+                        if speed_val > 0:
+                            speed_history.append(speed_val)
+                            # Keep only last 10 speed samples for moving average
+                            if len(speed_history) > 10:
+                                speed_history.pop(0)
+                            current_speed = sum(speed_history) / len(speed_history)
+                except (ValueError, IndexError):
+                    pass
             
             # Parse progress
             if 'out_time_ms=' in line:
@@ -380,14 +411,32 @@ def run_conversion(self, job_id: str):
                             job.progress = progress
                             job.save(update_fields=['progress'])
                             
-                            # Calculate ETA
-                            elapsed = (timezone.now() - job.started_at).total_seconds()
-                            if progress > 0:
-                                eta = int((elapsed / progress) * (100 - progress))
+                            # Calculate ETA using speed if available, else use elapsed time
+                            eta = None
+                            if current_speed and current_speed > 0 and job.duration_ms > 0:
+                                # ETA based on encoding speed
+                                remaining_ms = job.duration_ms * 1000 - time_ms
+                                eta = int((remaining_ms / 1000) / current_speed)
                             else:
-                                eta = None
+                                # Fallback to linear estimation
+                                elapsed = (timezone.now() - job.started_at).total_seconds()
+                                if progress > 0:
+                                    eta = int((elapsed / progress) * (100 - progress))
                             
-                            send_progress_update(job_id, progress, 'processing', job.current_stage, eta)
+                            # Clamp ETA to reasonable bounds (max 24 hours)
+                            if eta is not None:
+                                eta = max(0, min(eta, 86400))
+                            
+                            send_progress_update(
+                                job_id, 
+                                progress, 
+                                'processing', 
+                                job.current_stage, 
+                                eta,
+                                speed=round(current_speed, 2) if current_speed else None
+                            )
+                            
+                            last_time_ms = time_ms
                 except (ValueError, IndexError):
                     pass
         
