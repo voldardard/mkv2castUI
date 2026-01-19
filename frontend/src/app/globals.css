@@ -88,6 +88,18 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+/* Glass dropdown for better readability */
+.glass-dropdown {
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.dark .glass-dropdown {
+  background: rgba(0, 0, 0, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
 /* Card hover effect */
 .card-hover {
   @apply transition-all duration-300;

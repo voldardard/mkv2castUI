@@ -183,8 +183,8 @@ class TestLogout:
         """Test logout without authentication."""
         response = api_client.post('/api/auth/logout/')
         
-        # Should fail since not authenticated
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        # Should fail since not authenticated (DRF returns 403 for unauthenticated)
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
 
 @pytest.mark.django_db

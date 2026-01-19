@@ -73,7 +73,8 @@ class TestAdminDashboard:
         """Test unauthenticated user cannot access dashboard."""
         response = api_client.get('/api/admin/dashboard/')
         
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        # DRF returns 403 Forbidden for unauthenticated users with IsAuthenticated
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
 
 @pytest.mark.django_db

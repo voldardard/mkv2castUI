@@ -16,6 +16,14 @@ RUN echo "deb http://deb.debian.org/debian trixie main contrib non-free non-free
     vainfo \
     intel-media-va-driver \
     mesa-va-drivers \
+    # Pillow dependencies
+    libjpeg-dev \
+    zlib1g-dev \
+    libtiff-dev \
+    libfreetype6-dev \
+    liblcms2-dev \
+    libwebp-dev \
+    libopenjp2-7-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set work directory

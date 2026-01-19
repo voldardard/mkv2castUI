@@ -9,11 +9,14 @@ import { FileList } from '@/components/FileList';
 import { ProgressTracker } from '@/components/ProgressTracker';
 import { LoginPrompt } from '@/components/LoginPrompt';
 import { useTranslations } from '@/lib/i18n';
-import { useRequireAuth } from '@/hooks/useAuthConfig';
+import { useRequireAuth, useCurrentUser } from '@/hooks/useAuthConfig';
+import { api } from '@/lib/api';
+import { Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 
 export default function HomePage({ params: { lang } }: { params: { lang: string } }) {
   const { data: session, status } = useSession();
-  const { requireAuth } = useRequireAuth();
+  const { requireAuth, config } = useRequireAuth();
+  const { data: localUser } = useCurrentUser();
   const t = useTranslations(lang);
   const [files, setFiles] = useState<File[]>([]);
   const [options, setOptions] = useState({
@@ -22,14 +25,33 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
     preset: 'slow',
     crf: 20,
     audio_bitrate: '192k',
+    // Hardware-specific quality
+    vaapi_qp: 23,
+    qsv_quality: 23,
+    nvenc_cq: 23,
+    // Codec options
     force_h264: false,
     allow_hevc: false,
     force_aac: false,
     keep_surround: false,
+    // Audio/Subtitle selection
+    audio_lang: '',
+    audio_track: null as number | null,
+    subtitle_lang: '',
+    subtitle_track: null as number | null,
+    prefer_forced_subs: true,
+    no_subtitles: false,
+    // Optimization
+    skip_when_ok: true,
+    no_silence: false,
+    // Integrity checks
     integrity_check: true,
     deep_check: false,
   });
   const [activeJobs, setActiveJobs] = useState<string[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [uploadSuccess, setUploadSuccess] = useState('');
 
   const handleFilesSelected = (newFiles: File[]) => {
     setFiles((prev) => [...prev, ...newFiles]);
@@ -40,33 +62,57 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
   };
 
   const handleStartConversion = async () => {
-    // Allow conversion if auth is disabled OR user is logged in
-    if (requireAuth && !session) return;
+    // Determine if user has access (logged in via SSO, local token, or auth disabled)
+    const isAuthenticated = !!session || !!localUser || !!config?.user;
+    
+    if (requireAuth && !isAuthenticated) {
+      setUploadError('Please log in to start conversion');
+      return;
+    }
     if (files.length === 0) return;
 
-    for (const file of files) {
-      const formData = new FormData();
-      formData.append('file', file);
-      Object.entries(options).forEach(([key, value]) => {
-        formData.append(key, String(value));
-      });
+    setIsUploading(true);
+    setUploadError('');
+    setUploadSuccess('');
 
+    const uploadedJobs: string[] = [];
+    let hasError = false;
+
+    for (const file of files) {
       try {
-        const response = await fetch(`/${lang}/api/upload/`, {
-          method: 'POST',
-          body: formData,
+        const formData = new FormData();
+        formData.append('file', file);
+        Object.entries(options).forEach(([key, value]) => {
+          if (value !== null && value !== '' && value !== false) {
+            formData.append(key, String(value));
+          }
         });
 
-        if (response.ok) {
-          const job = await response.json();
-          setActiveJobs((prev) => [...prev, job.id]);
+        const response = await api.post(`/${lang}/api/upload/`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+
+        if (response.data?.id) {
+          uploadedJobs.push(response.data.id);
         }
-      } catch (error) {
-        console.error('Upload failed:', error);
+      } catch (err: any) {
+        hasError = true;
+        const errorMsg = err.response?.data?.detail || err.response?.data?.file?.[0] || 'Upload failed';
+        setUploadError(errorMsg);
+        break;
       }
     }
 
-    setFiles([]);
+    setIsUploading(false);
+
+    if (!hasError && uploadedJobs.length > 0) {
+      setActiveJobs((prev) => [...prev, ...uploadedJobs]);
+      setUploadSuccess(`Successfully uploaded ${uploadedJobs.length} file(s)`);
+      setFiles([]);
+      setTimeout(() => setUploadSuccess(''), 3000);
+    }
   };
 
   // Only show loading if auth is required AND session is loading
@@ -79,8 +125,9 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
     );
   }
 
-  // Determine if user has access (logged in OR auth disabled)
-  const hasAccess = !requireAuth || session;
+  // Determine if user has access (logged in via SSO, local token, or auth disabled)
+  const isAuthenticated = !!session || !!localUser || !!config?.user;
+  const hasAccess = !requireAuth || isAuthenticated;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-surface-950 via-surface-900 to-surface-950">
@@ -140,13 +187,37 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
                 />
               </section>
 
+              {/* Messages */}
+              {uploadError && (
+                <div className="flex items-center gap-2 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                  <span>{uploadError}</span>
+                </div>
+              )}
+              {uploadSuccess && (
+                <div className="flex items-center gap-2 p-4 bg-green-500/10 border border-green-500/20 rounded-xl text-green-400">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0" />
+                  <span>{uploadSuccess}</span>
+                </div>
+              )}
+
               {/* Start Button */}
               {files.length > 0 && (
                 <button
                   onClick={handleStartConversion}
-                  className="w-full py-4 px-6 bg-gradient-to-r from-primary-500 to-accent-500 hover:from-primary-600 hover:to-accent-600 text-white font-semibold rounded-xl transition-all duration-300 transform hover:scale-[1.02] shadow-lg shadow-primary-500/25"
+                  disabled={isUploading}
+                  className="w-full py-4 px-6 bg-gradient-to-r from-primary-500 to-accent-500 hover:from-primary-600 hover:to-accent-600 text-white font-semibold rounded-xl transition-all duration-300 transform hover:scale-[1.02] shadow-lg shadow-primary-500/25 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2"
                 >
-                  {t('convert.start')} ({files.length} {files.length === 1 ? t('files.file') : t('files.files')})
+                  {isUploading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      {t('convert.start')} ({files.length} {files.length === 1 ? t('files.file') : t('files.files')})
+                    </>
+                  )}
                 </button>
               )}
             </div>

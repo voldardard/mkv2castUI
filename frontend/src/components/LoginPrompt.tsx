@@ -1,9 +1,10 @@
 'use client';
 
 import { signIn } from 'next-auth/react';
+import { useSession } from 'next-auth/react';
 import { useTranslations } from '@/lib/i18n';
 import { motion } from 'framer-motion';
-import { useRequireAuth } from '@/hooks/useAuthConfig';
+import { useRequireAuth, useCurrentUser } from '@/hooks/useAuthConfig';
 
 interface LoginPromptProps {
   lang: string;
@@ -11,19 +12,32 @@ interface LoginPromptProps {
 
 export function LoginPrompt({ lang }: LoginPromptProps) {
   const t = useTranslations(lang);
-  const { requireAuth } = useRequireAuth();
+  const { requireAuth, config } = useRequireAuth();
+  const { data: session } = useSession();
+  const { data: localUser } = useCurrentUser();
 
   // Auth is disabled - user is automatically logged in as local user
   if (!requireAuth) {
     return null;
   }
 
+  // Check if user is authenticated (SSO session or local user with token)
+  const isAuthenticated = !!session || !!localUser || !!config?.user;
+
+  // Don't show if user is already logged in
+  if (isAuthenticated) {
+    return null;
+  }
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="max-w-md mx-auto glass rounded-2xl p-8 text-center"
-    >
+    <>
+      {/* Backdrop overlay that blocks all interaction */}
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md w-full glass rounded-2xl p-8 text-center relative z-10"
+        >
       <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center">
         <svg
           className="w-8 h-8 text-white"
@@ -86,7 +100,9 @@ export function LoginPrompt({ lang }: LoginPromptProps) {
         </button>
       </div>
 
-      <p className="mt-6 text-xs text-surface-500">{t('login.terms')}</p>
-    </motion.div>
+          <p className="mt-6 text-xs text-surface-500">{t('login.terms')}</p>
+        </motion.div>
+      </div>
+    </>
   );
 }

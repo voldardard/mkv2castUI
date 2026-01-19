@@ -12,6 +12,12 @@ export const api = axios.create({
 // Request interceptor for adding auth token
 api.interceptors.request.use(
   (config) => {
+    // Get token from localStorage for Token authentication
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (token) {
+      config.headers['Authorization'] = `Token ${token}`;
+    }
+    
     // Get CSRF token from cookie
     const csrfToken = getCookie('csrftoken');
     if (csrfToken) {
@@ -28,10 +34,15 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Redirect to login on unauthorized
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      // Clear invalid token
       if (typeof window !== 'undefined') {
-        window.location.href = '/api/auth/signin';
+        localStorage.removeItem('token');
+        // Redirect to login on unauthorized/forbidden
+        const currentPath = window.location.pathname;
+        if (!currentPath.includes('/auth/login')) {
+          window.location.href = '/en/auth/login';
+        }
       }
     }
     return Promise.reject(error);

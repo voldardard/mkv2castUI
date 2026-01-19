@@ -47,12 +47,14 @@ services:
     command: >
       sh -c "python manage.py migrate &&
              python manage.py collectstatic --noinput &&
-             gunicorn mkv2cast_api.wsgi:application --bind 0.0.0.0:8000 --workers 4"
+             gunicorn mkv2cast_api.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4} --timeout ${GUNICORN_TIMEOUT:-120}"
     environment:
       - REQUIRE_AUTH=${REQUIRE_AUTH:-true}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
       - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
       - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
+      - DJANGO_TIME_ZONE=${DJANGO_TIME_ZONE:-UTC}
+      - DJANGO_LANGUAGE_CODE=${DJANGO_LANGUAGE_CODE:-en-us}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL}
@@ -61,10 +63,13 @@ services:
       - S3_ACCESS_KEY=${S3_ACCESS_KEY}
       - S3_SECRET_KEY=${S3_SECRET_KEY}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - S3_REGION=${S3_REGION:-us-east-1}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      # mkv2cast settings
+      - MKV2CAST_MAX_FILE_SIZE=${MKV2CAST_MAX_FILE_SIZE:-10737418240}
     volumes:
       - static_files:/app/static
       - media_files:/app/media
@@ -105,7 +110,7 @@ services:
   celery:
     build: ./backend
     container_name: mkv2cast-celery
-    command: celery -A mkv2cast_api worker -l info --concurrency=2
+    command: celery -A mkv2cast_api worker -l info --concurrency=${CELERY_WORKER_CONCURRENCY:-2}
     environment:
       - REQUIRE_AUTH=${REQUIRE_AUTH:-true}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
@@ -119,8 +124,15 @@ services:
       - S3_ACCESS_KEY=${S3_ACCESS_KEY}
       - S3_SECRET_KEY=${S3_SECRET_KEY}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      # mkv2cast encoding settings
       - MKV2CAST_DEFAULT_HW=${MKV2CAST_DEFAULT_HW:-auto}
-      - MKV2CAST_VAAPI_DEVICE=${MKV2CAST_VAAPI_DEVICE:-/dev/dri/renderD128}
+      - MKV2CAST_VAAPI_DEVICE=${MKV2CAST_VAAPI_DEVICE:-}
+      - MKV2CAST_DEFAULT_CRF=${MKV2CAST_DEFAULT_CRF:-23}
+      - MKV2CAST_DEFAULT_PRESET=${MKV2CAST_DEFAULT_PRESET:-medium}
+      - MKV2CAST_DEFAULT_VAAPI_QP=${MKV2CAST_DEFAULT_VAAPI_QP:-23}
+      - MKV2CAST_DEFAULT_QSV_QUALITY=${MKV2CAST_DEFAULT_QSV_QUALITY:-23}
+      - MKV2CAST_DEFAULT_AUDIO_BITRATE=${MKV2CAST_DEFAULT_AUDIO_BITRATE:-192k}
+      - MKV2CAST_MAX_FILE_SIZE=${MKV2CAST_MAX_FILE_SIZE:-10737418240}
     volumes:
       - media_files:/app/media
     devices:

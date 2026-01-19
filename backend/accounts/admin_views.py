@@ -217,7 +217,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         """Change a user's subscription tier."""
         user = self.get_object()
         tier = request.data.get('tier')
-        duration_days = request.data.get('duration_days', 30)
+        duration_days = int(request.data.get('duration_days', 30))
         
         if tier not in ['free', 'pro', 'enterprise']:
             return Response(

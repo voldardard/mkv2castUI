@@ -1,0 +1,343 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useParams } from 'next/navigation';
+import { motion } from 'framer-motion';
+import {
+  Settings,
+  Save,
+  Loader2,
+  AlertCircle,
+  CheckCircle,
+  Shield,
+  HardDrive,
+  Cpu,
+  Users,
+} from 'lucide-react';
+import { api } from '@/lib/api';
+
+interface SiteSettings {
+  site_name: string;
+  site_tagline: string;
+  default_container: string;
+  default_hw_backend: string;
+  default_quality_preset: string;
+  max_file_size: number;
+  maintenance_mode: boolean;
+  maintenance_message: string;
+  allow_registration: boolean;
+  require_email_verification: boolean;
+}
+
+function formatBytes(bytes: number): string {
+  const gb = bytes / (1024 * 1024 * 1024);
+  return `${gb.toFixed(1)} GB`;
+}
+
+function parseBytes(gb: string): number {
+  return parseFloat(gb) * 1024 * 1024 * 1024;
+}
+
+export default function AdminSettingsPage() {
+  const params = useParams();
+  const lang = params.lang as string || 'en';
+
+  const [settings, setSettings] = useState<SiteSettings | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      setIsLoading(true);
+      setError('');
+      try {
+        const response = await api.get('/api/admin/settings/');
+        setSettings(response.data);
+      } catch (err: any) {
+        const status = err.response?.status;
+        if (status === 403) {
+          setError('Access denied. You do not have admin privileges.');
+        } else if (status === 401) {
+          setError('Authentication required. Please log in again.');
+        } else {
+          setError(err.response?.data?.detail || 'Failed to load settings');
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchSettings();
+  }, []);
+
+  const handleSave = async () => {
+    if (!settings) return;
+    
+    setIsSaving(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      await api.put('/api/admin/settings/', settings);
+      setSuccess('Settings saved successfully');
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err: any) {
+      const status = err.response?.status;
+      if (status === 403) {
+        setError('Access denied. You do not have admin privileges.');
+      } else if (status === 401) {
+        setError('Authentication required. Please log in again.');
+      } else {
+        setError(err.response?.data?.detail || 'Failed to save settings');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleChange = (field: keyof SiteSettings, value: any) => {
+    if (!settings) return;
+    setSettings({ ...settings, [field]: value });
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+      </div>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <div className="glass rounded-xl p-6 text-center">
+        <p className="text-red-400">{error || 'Failed to load settings'}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Server Settings</h1>
+          <p className="text-surface-400 mt-1">Configure default conversion settings and server options</p>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={isSaving}
+          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-primary-500 to-accent-500 text-white font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+        >
+          {isSaving ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            <>
+              <Save className="w-5 h-5" />
+              Save Changes
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Alerts */}
+      {error && (
+        <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400">
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+      {success && (
+        <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-green-400">
+          <CheckCircle className="w-5 h-5 flex-shrink-0" />
+          <span>{success}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Conversion Defaults */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass rounded-xl p-6"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 rounded-lg bg-primary-500/10">
+              <Cpu className="w-5 h-5 text-primary-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-white">Conversion Defaults</h2>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-surface-300 mb-2">
+                Default Container Format
+              </label>
+              <select
+                value={settings.default_container}
+                onChange={(e) => handleChange('default_container', e.target.value)}
+                className="w-full px-4 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white focus:border-primary-500 focus:outline-none"
+              >
+                <option value="mkv">MKV (Matroska)</option>
+                <option value="mp4">MP4 (MPEG-4)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-surface-300 mb-2">
+                Default Hardware Backend
+              </label>
+              <select
+                value={settings.default_hw_backend}
+                onChange={(e) => handleChange('default_hw_backend', e.target.value)}
+                className="w-full px-4 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white focus:border-primary-500 focus:outline-none"
+              >
+                <option value="auto">Auto-detect</option>
+                <option value="vaapi">VAAPI (AMD/Intel)</option>
+                <option value="qsv">QSV (Intel Quick Sync)</option>
+                <option value="cpu">CPU (Software)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-surface-300 mb-2">
+                Default Quality Preset
+              </label>
+              <select
+                value={settings.default_quality_preset}
+                onChange={(e) => handleChange('default_quality_preset', e.target.value)}
+                className="w-full px-4 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white focus:border-primary-500 focus:outline-none"
+              >
+                <option value="fast">Fast (Lower Quality)</option>
+                <option value="balanced">Balanced</option>
+                <option value="quality">High Quality (Slower)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-surface-300 mb-2">
+                Maximum File Size (GB)
+              </label>
+              <input
+                type="number"
+                value={(settings.max_file_size / (1024 * 1024 * 1024)).toFixed(1)}
+                onChange={(e) => handleChange('max_file_size', parseBytes(e.target.value))}
+                min="1"
+                max="100"
+                step="0.5"
+                className="w-full px-4 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white focus:border-primary-500 focus:outline-none"
+              />
+              <p className="text-surface-500 text-xs mt-1">
+                Maximum upload size: {formatBytes(settings.max_file_size)}
+              </p>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Registration & Security */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="glass rounded-xl p-6"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 rounded-lg bg-green-500/10">
+              <Users className="w-5 h-5 text-green-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-white">Registration & Security</h2>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-surface-800/50 rounded-lg">
+              <div>
+                <p className="text-white font-medium">Allow Registration</p>
+                <p className="text-surface-400 text-sm">Enable new user sign-ups</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.allow_registration}
+                  onChange={(e) => handleChange('allow_registration', e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-surface-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-500"></div>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-surface-800/50 rounded-lg">
+              <div>
+                <p className="text-white font-medium">Require Email Verification</p>
+                <p className="text-surface-400 text-sm">Users must verify email to use service</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.require_email_verification}
+                  onChange={(e) => handleChange('require_email_verification', e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-surface-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-500"></div>
+              </label>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Maintenance Mode */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="glass rounded-xl p-6 lg:col-span-2"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 rounded-lg bg-yellow-500/10">
+              <Shield className="w-5 h-5 text-yellow-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-white">Maintenance Mode</h2>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-surface-800/50 rounded-lg">
+              <div>
+                <p className="text-white font-medium">Enable Maintenance Mode</p>
+                <p className="text-surface-400 text-sm">
+                  Temporarily disable the service for maintenance
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.maintenance_mode}
+                  onChange={(e) => handleChange('maintenance_mode', e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-surface-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-500"></div>
+              </label>
+            </div>
+
+            {settings.maintenance_mode && (
+              <div>
+                <label className="block text-sm font-medium text-surface-300 mb-2">
+                  Maintenance Message
+                </label>
+                <textarea
+                  value={settings.maintenance_message}
+                  onChange={(e) => handleChange('maintenance_message', e.target.value)}
+                  rows={3}
+                  className="w-full px-4 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white focus:border-primary-500 focus:outline-none resize-none"
+                  placeholder="Message shown to users during maintenance..."
+                />
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </div>
+    </div>
+  );
+}

@@ -11,10 +11,26 @@ export interface ConversionOptionsType {
   preset: string;
   crf: number;
   audio_bitrate: string;
+  // Hardware-specific quality settings
+  vaapi_qp: number;
+  qsv_quality: number;
+  nvenc_cq: number;
+  // Codec decisions
   force_h264: boolean;
   allow_hevc: boolean;
   force_aac: boolean;
   keep_surround: boolean;
+  // Audio/Subtitle selection
+  audio_lang: string;
+  audio_track: number | null;
+  subtitle_lang: string;
+  subtitle_track: number | null;
+  prefer_forced_subs: boolean;
+  no_subtitles: boolean;
+  // Optimization
+  skip_when_ok: boolean;
+  no_silence: boolean;
+  // Integrity checks
   integrity_check: boolean;
   deep_check: boolean;
 }
@@ -132,9 +148,10 @@ export function ConversionOptions({ options, onChange, lang }: ConversionOptions
         <label className="block text-sm font-medium text-surface-300 mb-3">
           {t('options.backend')}
         </label>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {[
             { id: 'auto', label: 'Auto' },
+            { id: 'nvenc', label: 'NVENC' },
             { id: 'vaapi', label: 'VAAPI' },
             { id: 'qsv', label: 'QSV' },
             { id: 'cpu', label: 'CPU' },

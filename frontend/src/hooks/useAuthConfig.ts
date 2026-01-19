@@ -6,11 +6,15 @@ import { api } from '@/lib/api';
 export interface AuthConfig {
   require_auth: boolean;
   providers: string[];
+  allow_registration: boolean;
+  site_name: string;
   user?: {
     id: number;
     email: string;
     username: string;
     subscription_tier: string;
+    is_admin: boolean;
+    has_2fa: boolean;
   };
 }
 
@@ -67,4 +71,32 @@ export function useRequireAuth() {
     config,
     isError,
   };
+}
+
+/**
+ * Hook to get current user from local token or API.
+ */
+export function useCurrentUser() {
+  return useQuery({
+    queryKey: ['current-user'],
+    queryFn: async () => {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      if (!token) return null;
+      
+      try {
+        const response = await api.get('/api/auth/me/', {
+          headers: { Authorization: `Token ${token}` }
+        });
+        return response.data;
+      } catch {
+        // Token invalid, remove it
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('token');
+        }
+        return null;
+      }
+    },
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: false,
+  });
 }

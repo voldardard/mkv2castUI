@@ -1,0 +1,115 @@
+/* Custom CSS for mkv2castUI documentation */
+
+/* Hero banner styling */
+.hero-banner {
+  max-width: 100%;
+  margin: 2rem auto;
+  border-radius: 12px;
+}
+
+/* Screenshot styling */
+.screenshot {
+  max-width: 100%;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  margin: 1.5rem 0;
+}
+
+/* Code block improvements */
+.highlight pre {
+  border-radius: 8px;
+}
+
+/* Admonition styling */
+.admonition {
+  border-radius: 8px;
+  border-left-width: 4px;
+}
+
+/* Table improvements */
+table {
+  width: 100%;
+}
+
+table th {
+  background: var(--color-background-secondary);
+}
+
+/* API reference styling */
+.api-endpoint {
+  font-family: monospace;
+  background: var(--color-background-secondary);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  margin: 1rem 0;
+}
+
+/* Badge styling */
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-beta {
+  background: #f59e0b;
+  color: white;
+}
+
+.badge-stable {
+  background: #10b981;
+  color: white;
+}
+
+/* Feature cards */
+.feature-card {
+  background: var(--color-background-secondary);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 1rem 0;
+}
+
+.feature-card h3 {
+  margin-top: 0;
+}
+
+/* Related projects */
+.related-projects {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+  margin: 2rem 0;
+}
+
+.related-projects a {
+  display: block;
+  padding: 1rem;
+  background: var(--color-background-secondary);
+  border-radius: 8px;
+  text-decoration: none;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.related-projects a:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Version selector styling */
+.version-selector {
+  margin-bottom: 1rem;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .hero-banner {
+    margin: 1rem auto;
+  }
+  
+  table {
+    font-size: 0.875rem;
+  }
+}

@@ -24,6 +24,7 @@ class UserSerializer(serializers.ModelSerializer):
     storage_remaining = serializers.ReadOnlyField()
     storage_used_percent = serializers.ReadOnlyField()
     has_2fa = serializers.SerializerMethodField()
+    avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -45,28 +46,62 @@ class UserSerializer(serializers.ModelSerializer):
             'storage_used_percent',
             'is_admin',
             'has_2fa',
+            'avatar_url',
             'created_at',
         ]
         read_only_fields = fields
     
     def get_has_2fa(self, obj):
         return obj.totp_enabled
+    
+    def get_avatar_url(self, obj):
+        if obj.avatar:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.avatar.url)
+            return obj.avatar.url
+        return None
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
     """
     Serializer for updating user profile settings.
     """
+    avatar_url = serializers.SerializerMethodField()
+    
     class Meta:
         model = User
         fields = [
             'first_name',
             'last_name',
+            'avatar',
+            'avatar_url',
             'preferred_language',
             'default_container',
             'default_hw_backend',
             'default_quality_preset',
         ]
+        extra_kwargs = {
+            'avatar': {'required': False, 'allow_null': True},
+        }
+    
+    def get_avatar_url(self, obj):
+        if obj.avatar:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.avatar.url)
+            return obj.avatar.url
+        return None
+    
+    def validate_avatar(self, value):
+        if value:
+            # Limit file size to 5MB
+            if value.size > 5 * 1024 * 1024:
+                raise serializers.ValidationError('Avatar file size must be less than 5MB')
+            # Validate file type
+            if not value.content_type.startswith('image/'):
+                raise serializers.ValidationError('Avatar must be an image file')
+        return value
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
@@ -205,40 +240,51 @@ class RegistrationSerializer(serializers.Serializer):
 
 class LoginSerializer(serializers.Serializer):
     """
-    Serializer for user login.
+    Serializer for user login. Accepts either email or username.
     """
-    email = serializers.EmailField()
+    email_or_username = serializers.CharField()
     password = serializers.CharField(write_only=True)
     totp_code = serializers.CharField(required=False, allow_blank=True)
     
     def validate(self, data):
-        email = data.get('email', '').lower()
+        email_or_username = data.get('email_or_username', '').strip()
         password = data.get('password')
         
-        # Try to get user
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
+        if not email_or_username:
             raise serializers.ValidationError({
-                'email': "Invalid email or password."
+                'email_or_username': "Email or username is required."
             })
+        
+        # Try to find user by email first (case-insensitive)
+        user = None
+        email_or_username_lower = email_or_username.lower()
+        try:
+            user = User.objects.get(email__iexact=email_or_username_lower)
+        except User.DoesNotExist:
+            # If not found by email, try username (case-insensitive)
+            try:
+                user = User.objects.get(username__iexact=email_or_username_lower)
+            except User.DoesNotExist:
+                raise serializers.ValidationError({
+                    'email_or_username': "Invalid email/username or password."
+                })
         
         # Check if account is locked
         if user.is_locked:
             remaining = int((user.locked_until - timezone.now()).total_seconds() / 60)
             raise serializers.ValidationError({
-                'email': f"Account is locked. Please try again in {remaining} minutes."
+                'email_or_username': f"Account is locked. Please try again in {remaining} minutes."
             })
         
         # Check if user is using SSO
         if user.auth_provider != 'local':
             raise serializers.ValidationError({
-                'email': f"This account uses {user.auth_provider} login. Please sign in with {user.auth_provider}."
+                'email_or_username': f"This account uses {user.auth_provider} login. Please sign in with {user.auth_provider}."
             })
         
-        # Authenticate
+        # Authenticate using the user's email (Django's authenticate uses email as username)
         authenticated_user = authenticate(
-            username=email,
+            username=user.email,
             password=password
         )
         
@@ -246,7 +292,7 @@ class LoginSerializer(serializers.Serializer):
             # Record failed attempt
             user.record_failed_login()
             raise serializers.ValidationError({
-                'email': "Invalid email or password."
+                'email_or_username': "Invalid email/username or password."
             })
         
         # Check if 2FA is enabled
@@ -268,21 +314,26 @@ class LoginSerializer(serializers.Serializer):
 
 class TwoFactorLoginSerializer(serializers.Serializer):
     """
-    Serializer for completing 2FA login.
+    Serializer for completing 2FA login. Accepts either email or username.
     """
-    email = serializers.EmailField()
+    email_or_username = serializers.CharField()
     code = serializers.CharField()
     is_backup_code = serializers.BooleanField(default=False)
     
     def validate(self, data):
-        email = data.get('email', '').lower()
+        email_or_username = data.get('email_or_username', '').strip().lower()
         code = data.get('code', '').strip()
         is_backup = data.get('is_backup_code', False)
         
+        # Try to find user by email first, then username
+        user = None
         try:
-            user = User.objects.get(email=email)
+            user = User.objects.get(email__iexact=email_or_username)
         except User.DoesNotExist:
-            raise serializers.ValidationError({'code': "Invalid request."})
+            try:
+                user = User.objects.get(username__iexact=email_or_username)
+            except User.DoesNotExist:
+                raise serializers.ValidationError({'code': "Invalid request."})
         
         if not user.totp_enabled:
             raise serializers.ValidationError({'code': "2FA is not enabled."})

@@ -28,6 +28,9 @@ Thumbs.db
 # Testing
 coverage/
 .nyc_output/
+__tests__/
+jest.config.js
+jest.setup.tsx
 
 # Misc
 *.md

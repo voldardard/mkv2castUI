@@ -78,8 +78,84 @@ export function AdvancedOptions({ options, onChange, lang }: AdvancedOptionsProp
         <p className="mt-1 text-xs text-surface-500">{t('advanced.preset_hint')}</p>
       </div>
 
-      {/* Toggles */}
-      <div className="space-y-4">
+      {/* Audio/Subtitle Selection */}
+      <div className="space-y-4 pt-4 border-t border-surface-700">
+        <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider">
+          {t('advanced.audio_subtitle')}
+        </h4>
+        
+        {/* Audio Language */}
+        <div>
+          <label className="block text-sm font-medium text-surface-300 mb-2">
+            {t('advanced.audio_lang')}
+          </label>
+          <input
+            type="text"
+            value={options.audio_lang || ''}
+            onChange={(e) => handleChange('audio_lang', e.target.value)}
+            placeholder="fre,fra,eng"
+            className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-xl text-white placeholder-surface-500 focus:border-primary-500 focus:outline-none transition-colors"
+          />
+          <p className="mt-1 text-xs text-surface-500">{t('advanced.audio_lang_hint')}</p>
+        </div>
+
+        {/* Subtitle Language */}
+        <div>
+          <label className="block text-sm font-medium text-surface-300 mb-2">
+            {t('advanced.subtitle_lang')}
+          </label>
+          <input
+            type="text"
+            value={options.subtitle_lang || ''}
+            onChange={(e) => handleChange('subtitle_lang', e.target.value)}
+            placeholder="fre,eng"
+            className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-xl text-white placeholder-surface-500 focus:border-primary-500 focus:outline-none transition-colors"
+          />
+          <p className="mt-1 text-xs text-surface-500">{t('advanced.subtitle_lang_hint')}</p>
+        </div>
+
+        <ToggleOption
+          checked={options.prefer_forced_subs}
+          onChange={(v) => handleChange('prefer_forced_subs', v)}
+          label={t('advanced.prefer_forced_subs')}
+          description={t('advanced.prefer_forced_subs_desc')}
+        />
+
+        <ToggleOption
+          checked={options.no_subtitles}
+          onChange={(v) => handleChange('no_subtitles', v)}
+          label={t('advanced.no_subtitles')}
+          description={t('advanced.no_subtitles_desc')}
+        />
+      </div>
+
+      {/* Optimization Options */}
+      <div className="space-y-4 pt-4 border-t border-surface-700">
+        <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider">
+          {t('advanced.optimization')}
+        </h4>
+
+        <ToggleOption
+          checked={options.skip_when_ok}
+          onChange={(v) => handleChange('skip_when_ok', v)}
+          label={t('advanced.skip_when_ok')}
+          description={t('advanced.skip_when_ok_desc')}
+        />
+
+        <ToggleOption
+          checked={options.no_silence}
+          onChange={(v) => handleChange('no_silence', v)}
+          label={t('advanced.no_silence')}
+          description={t('advanced.no_silence_desc')}
+        />
+      </div>
+
+      {/* Codec Options */}
+      <div className="space-y-4 pt-4 border-t border-surface-700">
+        <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider">
+          {t('advanced.codec_options')}
+        </h4>
+
         <ToggleOption
           checked={options.force_h264}
           onChange={(v) => handleChange('force_h264', v)}
@@ -107,6 +183,13 @@ export function AdvancedOptions({ options, onChange, lang }: AdvancedOptionsProp
           label={t('advanced.keep_surround')}
           description={t('advanced.keep_surround_desc')}
         />
+      </div>
+
+      {/* Integrity Options */}
+      <div className="space-y-4 pt-4 border-t border-surface-700">
+        <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider">
+          {t('advanced.integrity')}
+        </h4>
 
         <ToggleOption
           checked={options.integrity_check}

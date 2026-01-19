@@ -1,0 +1,11 @@
+<svg width="200" height="50" viewBox="0 0 200 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad-dark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#818cf8"/>
+      <stop offset="100%" style="stop-color:#f472b6"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="10" width="30" height="30" rx="6" fill="url(#grad-dark)"/>
+  <text x="8" y="32" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700" fill="white">M2C</text>
+  <text x="42" y="33" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" fill="#f8fafc">mkv2castUI</text>
+</svg>

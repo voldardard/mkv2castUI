@@ -10,6 +10,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser
 
 from .serializers import (
     UserSerializer,
@@ -43,9 +44,15 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     """
     serializer_class = UserProfileSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
 
     def get_object(self):
         return self.request.user
+    
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
 
 
 @api_view(['GET'])
@@ -156,10 +163,10 @@ class LoginView(APIView):
     def post(self, request):
         throttle = LoginRateThrottle()
         
-        # Check user-specific throttle
-        email = request.data.get('email', '').lower()
-        if email:
-            throttle.check_user_throttle(email)
+        # Check user-specific throttle using email_or_username
+        email_or_username = request.data.get('email_or_username', '').strip().lower()
+        if email_or_username:
+            throttle.check_user_throttle(email_or_username)
         
         serializer = LoginSerializer(data=request.data)
         
@@ -184,8 +191,8 @@ class LoginView(APIView):
             user.last_login = timezone.now()
             user.save(update_fields=['last_login_ip', 'last_login'])
             
-            # Reset throttle on success
-            throttle.reset_attempts(email)
+            # Reset throttle on success (use email for consistency)
+            throttle.reset_attempts(user.email)
             
             return Response({
                 'user': UserSerializer(user).data,
@@ -194,7 +201,7 @@ class LoginView(APIView):
             }, status=status.HTTP_200_OK)
         
         # Record failed attempt
-        throttle.record_failed_attempt(email)
+        throttle.record_failed_attempt(email_or_username)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     

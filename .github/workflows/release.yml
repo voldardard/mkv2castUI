@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.tag.outputs.VERSION }}
+          body: |
+            ## Changes in ${{ steps.tag.outputs.VERSION }}
+            
+            See [CHANGELOG.md](CHANGELOG.md) for details.
+            
+            ## Installation
+            
+            ```bash
+            git clone https://github.com/voldardard/mkv2castUI.git
+            cd mkv2castUI
+            git checkout ${{ steps.tag.outputs.VERSION }}
+            docker-compose up -d
+            ```
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.VERSION, 'beta') || contains(steps.tag.outputs.VERSION, 'alpha') }}

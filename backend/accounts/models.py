@@ -78,6 +78,8 @@ class User(AbstractUser):
     # ==========================================================================
     # User Preferences
     # ==========================================================================
+    avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
+    
     preferred_language = models.CharField(
         max_length=5,
         choices=[
