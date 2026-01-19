@@ -119,3 +119,118 @@ export async function getUserStats(lang: string) {
   const response = await api.get(`/${lang}/api/stats/`);
   return response.data;
 }
+
+/**
+ * Download a converted file with authentication
+ * Uses blob response and triggers browser download
+ */
+export async function downloadFile(lang: string, jobId: string, filename: string): Promise<void> {
+  try {
+    // Get auth token
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!token) {
+      throw new Error('Authentication required');
+    }
+
+    // Create a temporary form to trigger download with proper headers
+    // This bypasses axios interceptors and allows browser to handle download natively
+    const form = document.createElement('form');
+    form.method = 'GET';
+    form.action = `/${lang}/api/jobs/${jobId}/download/`;
+    form.style.display = 'none';
+    
+    // Add CSRF token if available
+    const csrfToken = getCookie('csrftoken');
+    if (csrfToken) {
+      const csrfInput = document.createElement('input');
+      csrfInput.type = 'hidden';
+      csrfInput.name = 'csrfmiddlewaretoken';
+      csrfInput.value = csrfToken;
+      form.appendChild(csrfInput);
+    }
+    
+    document.body.appendChild(form);
+    
+    // Encode filename for URL (use encodeURIComponent for safe encoding)
+    const encodedFilename = encodeURIComponent(filename);
+    
+    // Use fetch with proper headers to get the file
+    // Include filename in URL for better browser compatibility
+    const response = await fetch(`/${lang}/api/jobs/${jobId}/download/${encodedFilename}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Token ${token}`,
+        ...(csrfToken && { 'X-CSRFToken': csrfToken }),
+      },
+    });
+    
+    // Check if response is OK
+    if (!response.ok) {
+      // Try to parse error
+      const errorText = await response.text();
+      try {
+        const error = JSON.parse(errorText);
+        throw new Error(error.detail || 'Download failed');
+      } catch {
+        throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+      }
+    }
+    
+    // Check Content-Type
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Download failed');
+    }
+    
+    // Get filename from Content-Disposition header
+    const contentDisposition = response.headers.get('content-disposition');
+    let downloadFilename = filename;
+    
+    if (contentDisposition) {
+      // Try to extract filename from Content-Disposition
+      // Support both filename="..." and filename*=UTF-8''...
+      const filenameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/) ||
+                           contentDisposition.match(/filename="?([^";]+)"?/);
+      
+      if (filenameMatch && filenameMatch[1]) {
+        try {
+          downloadFilename = decodeURIComponent(filenameMatch[1]);
+        } catch {
+          downloadFilename = filenameMatch[1].replace(/['"]/g, '');
+        }
+      }
+    }
+    
+    // Get blob and trigger download
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = downloadFilename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    
+    // Cleanup
+    setTimeout(() => {
+      document.body.removeChild(link);
+      document.body.removeChild(form);
+      window.URL.revokeObjectURL(url);
+    }, 100);
+  } catch (error: any) {
+    console.error('Download error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get active jobs (pending, queued, analyzing, processing)
+ */
+export async function getActiveJobs(lang: string): Promise<string[]> {
+  const response = await api.get(`/${lang}/api/jobs/`);
+  const jobs = response.data.results || response.data || [];
+  return jobs
+    .filter((job: any) => ['pending', 'queued', 'analyzing', 'processing'].includes(job.status))
+    .map((job: any) => job.id);
+}

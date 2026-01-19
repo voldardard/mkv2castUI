@@ -467,14 +467,19 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
     Serializer for site settings.
     """
     logo = serializers.ReadOnlyField()
+    # File fields - optional, only updated when actual files are provided
+    logo_file = serializers.ImageField(required=False, allow_null=True)
+    favicon_file = serializers.ImageField(required=False, allow_null=True)
     # Don't expose secrets in responses - write-only
     smtp_password = serializers.CharField(write_only=True, required=False, allow_blank=True)
     google_client_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
     github_client_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    s3_secret_key = serializers.CharField(write_only=True, required=False, allow_blank=True)
     # Indicate if secrets are set
     smtp_password_set = serializers.SerializerMethodField()
     google_configured = serializers.SerializerMethodField()
     github_configured = serializers.SerializerMethodField()
+    s3_configured = serializers.SerializerMethodField()
     
     class Meta:
         model = SiteSettings
@@ -516,10 +521,19 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             'smtp_use_ssl',
             'smtp_from_email',
             'smtp_from_name',
+            # S3 Storage
+            'use_s3_storage',
+            's3_endpoint',
+            's3_access_key',
+            's3_secret_key',
+            's3_bucket_name',
+            's3_region',
+            's3_custom_domain',
+            's3_configured',
             # Timestamps
             'updated_at',
         ]
-        read_only_fields = ['updated_at', 'logo', 'smtp_password_set', 'google_configured', 'github_configured']
+        read_only_fields = ['updated_at', 'logo', 'smtp_password_set', 'google_configured', 'github_configured', 's3_configured']
     
     def get_smtp_password_set(self, obj):
         return bool(obj.smtp_password)
@@ -530,6 +544,25 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
     def get_github_configured(self, obj):
         return bool(obj.github_client_id and obj.github_client_secret)
     
+    def get_s3_configured(self, obj):
+        return bool(obj.s3_endpoint and obj.s3_access_key and obj.s3_secret_key and obj.s3_bucket_name)
+    
+    def validate_logo_file(self, value):
+        """Only accept actual file uploads, ignore string values from JSON."""
+        request = self.context.get('request')
+        if request and 'logo_file' not in request.FILES:
+            # If logo_file is not in FILES, it's likely a string from JSON - ignore it
+            return None
+        return value
+    
+    def validate_favicon_file(self, value):
+        """Only accept actual file uploads, ignore string values from JSON."""
+        request = self.context.get('request')
+        if request and 'favicon_file' not in request.FILES:
+            # If favicon_file is not in FILES, it's likely a string from JSON - ignore it
+            return None
+        return value
+    
     def update(self, instance, validated_data):
         # Only update secrets if provided (don't clear on empty)
         if 'smtp_password' in validated_data and not validated_data['smtp_password']:
@@ -538,6 +571,20 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             validated_data.pop('google_client_secret')
         if 'github_client_secret' in validated_data and not validated_data['github_client_secret']:
             validated_data.pop('github_client_secret')
+        if 's3_secret_key' in validated_data and not validated_data['s3_secret_key']:
+            validated_data.pop('s3_secret_key')
+        
+        # Only update logo_file and favicon_file if actual files are provided
+        # (not just string paths from JSON requests)
+        request = self.context.get('request')
+        if request:
+            # If logo_file is in validated_data but not in FILES, remove it
+            if 'logo_file' in validated_data and 'logo_file' not in request.FILES:
+                validated_data.pop('logo_file')
+            # If favicon_file is in validated_data but not in FILES, remove it
+            if 'favicon_file' in validated_data and 'favicon_file' not in request.FILES:
+                validated_data.pop('favicon_file')
+        
         return super().update(instance, validated_data)
 
 

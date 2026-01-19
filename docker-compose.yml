@@ -44,10 +44,7 @@ services:
   backend:
     build: ./backend
     container_name: mkv2cast-backend
-    command: >
-      sh -c "python manage.py migrate &&
-             python manage.py collectstatic --noinput &&
-             gunicorn mkv2cast_api.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4} --timeout ${GUNICORN_TIMEOUT:-120}"
+    command: gunicorn mkv2cast_api.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4} --timeout ${GUNICORN_TIMEOUT:-120}
     environment:
       - REQUIRE_AUTH=${REQUIRE_AUTH:-true}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
@@ -88,6 +85,7 @@ services:
     container_name: mkv2cast-daphne
     command: daphne -b 0.0.0.0 -p 8001 mkv2cast_api.asgi:application
     environment:
+      - SKIP_COLLECTSTATIC=1
       - REQUIRE_AUTH=${REQUIRE_AUTH:-true}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
       - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
@@ -112,6 +110,7 @@ services:
     container_name: mkv2cast-celery
     command: celery -A mkv2cast_api worker -l info --concurrency=${CELERY_WORKER_CONCURRENCY:-2}
     environment:
+      - SKIP_COLLECTSTATIC=1
       - REQUIRE_AUTH=${REQUIRE_AUTH:-true}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
       - DJANGO_DEBUG=${DJANGO_DEBUG:-False}

@@ -78,6 +78,111 @@ export function AdvancedOptions({ options, onChange, lang }: AdvancedOptionsProp
         <p className="mt-1 text-xs text-surface-500">{t('advanced.preset_hint')}</p>
       </div>
 
+      {/* Hardware-specific Quality Settings */}
+      {options.hw_backend !== 'cpu' && options.hw_backend !== 'auto' && (
+        <div className="space-y-4 pt-4 border-t border-surface-700">
+          <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider">
+            {t('advanced.hw_quality') || 'Hardware Quality'}
+          </h4>
+
+          {/* VAAPI QP */}
+          {options.hw_backend === 'vaapi' && (
+            <div>
+              <div className="flex justify-between mb-2">
+                <label className="text-sm font-medium text-surface-300">
+                  VAAPI QP
+                </label>
+                <span className="text-sm text-primary-400 font-mono">{options.vaapi_qp}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="51"
+                value={options.vaapi_qp}
+                onChange={(e) => handleChange('vaapi_qp', parseInt(e.target.value))}
+                className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
+              />
+              <div className="flex justify-between text-xs text-surface-500 mt-1">
+                <span>{t('advanced.quality_best')}</span>
+                <span>{t('advanced.quality_worst')}</span>
+              </div>
+            </div>
+          )}
+
+          {/* QSV Quality */}
+          {options.hw_backend === 'qsv' && (
+            <div>
+              <div className="flex justify-between mb-2">
+                <label className="text-sm font-medium text-surface-300">
+                  QSV Quality
+                </label>
+                <span className="text-sm text-primary-400 font-mono">{options.qsv_quality}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="51"
+                value={options.qsv_quality}
+                onChange={(e) => handleChange('qsv_quality', parseInt(e.target.value))}
+                className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
+              />
+              <div className="flex justify-between text-xs text-surface-500 mt-1">
+                <span>{t('advanced.quality_best')}</span>
+                <span>{t('advanced.quality_worst')}</span>
+              </div>
+            </div>
+          )}
+
+          {/* NVENC CQ */}
+          {options.hw_backend === 'nvenc' && (
+            <div>
+              <div className="flex justify-between mb-2">
+                <label className="text-sm font-medium text-surface-300">
+                  NVENC CQ
+                </label>
+                <span className="text-sm text-primary-400 font-mono">{options.nvenc_cq}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="51"
+                value={options.nvenc_cq}
+                onChange={(e) => handleChange('nvenc_cq', parseInt(e.target.value))}
+                className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
+              />
+              <div className="flex justify-between text-xs text-surface-500 mt-1">
+                <span>{t('advanced.quality_best')}</span>
+                <span>{t('advanced.quality_worst')}</span>
+              </div>
+            </div>
+          )}
+
+          {/* AMF Quality */}
+          {options.hw_backend === 'amf' && (
+            <div>
+              <div className="flex justify-between mb-2">
+                <label className="text-sm font-medium text-surface-300">
+                  AMF Quality
+                </label>
+                <span className="text-sm text-primary-400 font-mono">{options.amf_quality}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="51"
+                value={options.amf_quality}
+                onChange={(e) => handleChange('amf_quality', parseInt(e.target.value))}
+                className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
+              />
+              <div className="flex justify-between text-xs text-surface-500 mt-1">
+                <span>{t('advanced.quality_best')}</span>
+                <span>{t('advanced.quality_worst')}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Audio/Subtitle Selection */}
       <div className="space-y-4 pt-4 border-t border-surface-700">
         <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider">

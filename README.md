@@ -479,6 +479,88 @@ MKV2CAST_MAX_FILE_SIZE=21474836480  # 20GB
 
 ---
 
+## 🗺️ Roadmap
+
+Voici les fonctionnalités prévues pour les prochaines versions de mkv2castUI. Cette roadmap est sujette à modifications selon les retours de la communauté.
+
+### 🎯 Court terme (v1.0.0 - v2.0.0)
+
+#### Casting depuis l'interface
+- **Détection automatique des Chromecast** : Scan du réseau local depuis le frontend React pour détecter les appareils Chromecast disponibles
+- **Sélection d'appareil par défaut** : Affichage d'un sélecteur en haut de l'interface pour choisir le Chromecast par défaut (uniquement si plusieurs appareils sont détectés)
+- **Bouton de cast intelligent** : 
+  - Bouton principal pour lancer le cast sur l'appareil par défaut
+  - Menu déroulant pour sélectionner un Chromecast spécifique
+  - Masquage automatique de l'interface si aucun appareil n'est détecté
+  - Masquage de la flèche du dropdown s'il n'y a qu'un seul appareil
+
+#### Métriques et monitoring
+- **Métriques par tâche** : Suivi détaillé de l'utilisation des ressources (CPU, GPU, mémoire, I/O) pour chaque conversion
+- **Dashboard de performance** : Visualisation des métriques pour identifier les tâches les plus gourmandes
+- **Alertes de ressources** : Notifications lorsque les ressources approchent de leurs limites
+
+#### Application Progressive Web App (PWA)
+- **React App installable** : Application installable sur navigateur (PWA) pour une expérience native
+- **Notifications navigateur** : Notifications push intégrées du navigateur pour les événements de conversion
+
+#### Gestion avancée des conversions
+- **Gestion des priorités** : Système de priorités pour les conversions en file d'attente
+- **Retry automatique** : Système de retry intelligent en cas d'échec de conversion
+- **Détection de qualité** : Analyse automatique de la qualité source et recommandations
+- **Batch intelligent** : Optimisation automatique de l'ordre des conversions pour maximiser l'efficacité
+
+### 🔮 Moyen terme (v3.0.0 - v5.0.0)
+
+#### Notifications et communication
+- **Notifications par email** : Notifications par email lors de la fin de conversion ou d'erreurs
+- **Webhooks** : Support pour webhooks personnalisés pour intégrations tierces
+
+#### Formats et appareils
+- **Support multi-format** : Export vers d'autres formats que MKV (MP4, WebM, etc.)
+- **Support multi-appareil** : Extension au-delà de Chromecast (Apple TV, Roku, Smart TV, etc.)
+
+#### Intégrations cloud
+- **Stockage cloud** : Intégration native avec S3, Google Cloud Storage, Azure Blob
+- **Synchronisation automatique** : Synchronisation automatique des fichiers convertis vers le cloud
+- **Import depuis le cloud** : Possibilité d'importer des fichiers directement depuis les services cloud
+
+#### Système de paiement et abonnements
+- **Intégration de paiement** : Support pour Stripe/PayPal pour les transactions
+- **Gestion d'abonnements** : 
+  - Plans avec différents niveaux (gratuit, basique, premium, entreprise)
+  - Limites configurables : nombre de conversions, workers, puissance de traitement
+  - Gestion des quotas et limites par utilisateur
+- **Tableau de bord d'abonnement** : Interface pour gérer son abonnement, voir l'utilisation et les limites
+
+#### Support des torrents
+- **Import de fichiers torrent** : Possibilité d'importer un fichier `.torrent` dans l'interface
+- **Sélection de fichiers** : Choix des fichiers à télécharger depuis le torrent (ou téléchargement de tous les fichiers)
+- **Intégration avec clients torrent** : Support pour transmission/qBittorrent pour le téléchargement
+
+#### Améliorations de l'expérience utilisateur
+- **Playlists** : Support pour créer et gérer des playlists de conversions
+- **Prévisualisation vidéo** : Lecteur vidéo intégré pour prévisualiser les fichiers avant/après conversion
+
+### 🚀 Long terme (v6.0.0+)
+
+#### Fonctionnalités avancées
+- **IA et optimisation** : Utilisation de l'IA pour optimiser automatiquement les paramètres de conversion
+- **Collaboration** : Partage de conversions et collaboration entre utilisateurs
+- **API GraphQL** : Alternative GraphQL en complément de l'API REST
+
+#### Écosystème
+- **Applications mobiles** : Applications iOS et Android natives
+- **Extensions navigateur** : Extension pour Chrome/Firefox pour un accès rapide
+- **CLI amélioré** : Interface en ligne de commande enrichie pour les utilisateurs avancés
+- **Plugins** : Système de plugins pour étendre les fonctionnalités
+
+### 🔮 Indéterminé
+
+#### Fonctionnalités complexes
+- **Conversion distribuée** : Support pour plusieurs workers sur différents serveurs (complexité très élevée)
+
+---
+
 ## 🤝 Contributing
 
 We welcome contributions! Please read our [Contributing Guide](https://voldardard.github.io/mkv2castUI/development/contributing.html).

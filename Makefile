@@ -118,6 +118,30 @@ test-frontend: ## Run frontend tests only
 test-e2e: ## Run E2E tests
 	@cd e2e && npx playwright test
 
+migrations: ## Create Django migrations
+	@echo "$(GREEN)Creating Django migrations...$(NC)"
+	@docker-compose exec backend python manage.py makemigrations || \
+		(cd backend && python manage.py makemigrations)
+
+migrate: ## Apply Django migrations
+	@echo "$(GREEN)Applying Django migrations...$(NC)"
+	@docker-compose exec backend python manage.py migrate || \
+		(cd backend && python manage.py migrate)
+
+migrations-check: ## Check for pending migrations
+	@echo "$(GREEN)Checking for pending migrations...$(NC)"
+	@docker-compose exec backend python manage.py showmigrations --plan | grep -q '\[ \]' && \
+		echo "$(YELLOW)⚠ Pending migrations found. Run 'make migrate' to apply.$(NC)" || \
+		echo "$(GREEN)✓ All migrations applied$(NC)"
+
+migrations-backend: ## Create backend migrations (local, no Docker)
+	@echo "$(GREEN)Creating backend migrations...$(NC)"
+	@cd backend && python manage.py makemigrations
+
+migrate-backend: ## Apply backend migrations (local, no Docker)
+	@echo "$(GREEN)Applying backend migrations...$(NC)"
+	@cd backend && python manage.py migrate
+
 build: ## Build Docker images
 	@echo "$(GREEN)Building Docker images...$(NC)"
 	@docker-compose build
@@ -222,9 +246,11 @@ docs-serve: docs-build ## Build and serve documentation locally
 	@cd docs/_build/html && python -m http.server 8000
 
 version: ## Show current version
-	@echo "$(GREEN)Current version: $(VERSION)$(NC)"
-	@echo "Backend: $(shell grep -E "^__version__" $(VERSION_FILE) | cut -d'"' -f2)"
-	@echo "Frontend: $(shell grep -E '"version"' $(FRONTEND_VERSION) | head -1 | cut -d'"' -f4)"
+	@BACKEND_VER=$$(grep -E "^__version__" $(VERSION_FILE) | cut -d'"' -f2); \
+	FRONTEND_VER=$$(grep -E '"version"' $(FRONTEND_VERSION) | head -1 | cut -d'"' -f4); \
+	echo "$(GREEN)Current version: $$BACKEND_VER$(NC)"; \
+	echo "Backend: $$BACKEND_VER"; \
+	echo "Frontend: $$FRONTEND_VER"
 
 check: ## Check if ready for release
 	@echo "$(GREEN)Checking release readiness...$(NC)"

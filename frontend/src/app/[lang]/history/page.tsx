@@ -1,9 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useConversionJobs, useDeleteJob, useCancelJob } from '@/hooks/useConversion';
-import { useRequireAuth } from '@/hooks/useAuthConfig';
+import { useRequireAuth, useCurrentUser } from '@/hooks/useAuthConfig';
 import { useTranslations } from '@/lib/i18n';
+import { downloadFile } from '@/lib/api';
 import { Header } from '@/components/Header';
 import { LoginPrompt } from '@/components/LoginPrompt';
 import {
@@ -21,11 +23,25 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 export default function HistoryPage({ params: { lang } }: { params: { lang: string } }) {
   const { data: session, status: authStatus } = useSession();
-  const { requireAuth } = useRequireAuth();
+  const { requireAuth, config } = useRequireAuth();
+  const { data: localUser } = useCurrentUser();
   const t = useTranslations(lang);
   const { data: jobs, isLoading, error } = useConversionJobs(lang);
   const deleteJob = useDeleteJob(lang);
   const cancelJob = useCancelJob(lang);
+  const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
+
+  const handleDownload = async (jobId: string, filename: string) => {
+    setDownloadingJobId(jobId);
+    try {
+      await downloadFile(lang, jobId, filename);
+    } catch (err) {
+      console.error('Download failed:', err);
+      alert('Download failed. Please try again.');
+    } finally {
+      setDownloadingJobId(null);
+    }
+  };
 
   // Only show loading if auth is required AND session is loading
   if (requireAuth && authStatus === 'loading') {
@@ -36,8 +52,9 @@ export default function HistoryPage({ params: { lang } }: { params: { lang: stri
     );
   }
 
-  // User has access if auth is disabled OR they're logged in
-  const hasAccess = !requireAuth || session;
+  // User has access if auth is disabled OR they're logged in (via SSO or local token)
+  const isAuthenticated = !!session || !!localUser || !!config?.user;
+  const hasAccess = !requireAuth || isAuthenticated;
 
   const statusConfig = {
     pending: { icon: Clock, color: 'text-yellow-400', bg: 'bg-yellow-500/10', spin: false },
@@ -139,13 +156,18 @@ export default function HistoryPage({ params: { lang } }: { params: { lang: stri
                       {/* Actions */}
                       <div className="flex-shrink-0 flex items-center gap-2">
                         {job.status === 'completed' && (
-                          <a
-                            href={`/${lang}/api/jobs/${job.id}/download/`}
-                            className="p-2 rounded-lg text-green-400 hover:bg-green-500/10 transition-colors"
+                          <button
+                            onClick={() => handleDownload(job.id, job.output_filename || job.original_filename.replace('.mkv', '.mp4'))}
+                            disabled={downloadingJobId === job.id}
+                            className="p-2 rounded-lg text-green-400 hover:bg-green-500/10 transition-colors disabled:opacity-50"
                             title="Download"
                           >
-                            <Download className="w-5 h-5" />
-                          </a>
+                            {downloadingJobId === job.id ? (
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                            ) : (
+                              <Download className="w-5 h-5" />
+                            )}
+                          </button>
                         )}
 
                         {['pending', 'queued', 'processing', 'analyzing'].includes(job.status) && (

@@ -12,7 +12,6 @@ import {
   Globe, 
   User, 
   LogOut, 
-  Settings, 
   Home, 
   Shield, 
   Key,
@@ -125,7 +124,7 @@ export function Header({ lang }: HeaderProps) {
       title: 'mkv2cast CLI',
       href: 'https://voldardard.github.io/mkv2cast/',
       icon: <Book className="w-4 h-4" />,
-      badge: 'ReadTheDocs',
+      badge: 'Sphinx',
     },
     {
       title: 'mkv2castUI Docs',
@@ -353,15 +352,6 @@ export function Header({ lang }: HeaderProps) {
                       >
                         <Key className="w-4 h-4" />
                         Two-Factor Auth
-                      </Link>
-                      
-                      <Link
-                        href={`/${lang}/settings`}
-                        onClick={() => setUserMenuOpen(false)}
-                        className="flex items-center gap-3 px-4 py-2 text-surface-300 hover:bg-surface-800 transition-colors"
-                      >
-                        <Settings className="w-4 h-4" />
-                        {t('nav.settings')}
                       </Link>
                       
                       <div className="border-t border-surface-700 my-1" />

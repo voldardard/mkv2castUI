@@ -10,6 +10,7 @@ import {
   FileVideo,
   Settings,
   Palette,
+  Gauge,
   ChevronLeft,
   Menu,
   X,
@@ -86,6 +87,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
   const navigation = [
     { name: 'Dashboard', href: `/${lang}/admin`, icon: LayoutDashboard },
+    { name: 'Monitoring', href: `/${lang}/admin/monitoring`, icon: Gauge },
     { name: 'Users', href: `/${lang}/admin/users`, icon: Users },
     { name: 'Files', href: `/${lang}/admin/files`, icon: FileVideo },
     { name: 'Tasks', href: `/${lang}/admin/tasks`, icon: ListTodo },

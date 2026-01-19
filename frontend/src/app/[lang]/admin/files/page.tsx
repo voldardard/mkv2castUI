@@ -22,7 +22,7 @@ import {
   FileWarning,
   Link2Off,
 } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, downloadFile } from '@/lib/api';
 
 interface ConversionFile {
   id: string;
@@ -81,6 +81,7 @@ export default function AdminFilesPage() {
     all: 0,
   });
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const [downloadLoading, setDownloadLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -153,8 +154,17 @@ export default function AdminFilesPage() {
     }
   };
 
-  const getDownloadUrl = (fileId: string) => {
-    return `/api/jobs/${fileId}/download/`;
+  const handleDownload = async (fileId: string, filename: string) => {
+    setDownloadLoading(fileId);
+    try {
+      // Use 'en' as default since admin doesn't need language prefix
+      await downloadFile('en', fileId, filename);
+    } catch (err) {
+      console.error('Download failed:', err);
+      showError('Failed to download file');
+    } finally {
+      setDownloadLoading(null);
+    }
   };
 
   const viewModeLabels: Record<ViewMode, { label: string; icon: React.ElementType }> = {
@@ -339,14 +349,18 @@ export default function AdminFilesPage() {
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
                             {file.status === 'completed' && file.output_file_size > 0 && (
-                              <a
-                                href={getDownloadUrl(file.id)}
-                                className="p-2 text-surface-400 hover:text-primary-400 hover:bg-primary-500/10 rounded-lg transition-colors"
+                              <button
+                                onClick={() => handleDownload(file.id, file.original_filename.replace('.mkv', '.mp4'))}
+                                disabled={downloadLoading === file.id}
+                                className="p-2 text-surface-400 hover:text-primary-400 hover:bg-primary-500/10 rounded-lg transition-colors disabled:opacity-50"
                                 title="Download file"
-                                download
                               >
-                                <Download className="w-5 h-5" />
-                              </a>
+                                {downloadLoading === file.id ? (
+                                  <Loader2 className="w-5 h-5 animate-spin" />
+                                ) : (
+                                  <Download className="w-5 h-5" />
+                                )}
+                              </button>
                             )}
                             <button
                               onClick={() => handleDelete(file.id)}

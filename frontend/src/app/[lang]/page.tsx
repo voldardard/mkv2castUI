@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { Header } from '@/components/Header';
 import { FileUploader } from '@/components/FileUploader';
@@ -10,6 +10,7 @@ import { ProgressTracker } from '@/components/ProgressTracker';
 import { LoginPrompt } from '@/components/LoginPrompt';
 import { useTranslations } from '@/lib/i18n';
 import { useRequireAuth, useCurrentUser } from '@/hooks/useAuthConfig';
+import { useActiveJobs } from '@/hooks/useConversion';
 import { api } from '@/lib/api';
 import { Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 
@@ -29,6 +30,7 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
     vaapi_qp: 23,
     qsv_quality: 23,
     nvenc_cq: 23,
+    amf_quality: 23,
     // Codec options
     force_h264: false,
     allow_hevc: false,
@@ -52,6 +54,30 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [uploadSuccess, setUploadSuccess] = useState('');
+
+  // Fetch active jobs from API on mount
+  const { data: serverActiveJobs } = useActiveJobs(lang);
+
+  // Sync server active jobs with local state
+  useEffect(() => {
+    if (serverActiveJobs && serverActiveJobs.length > 0) {
+      setActiveJobs((prev) => {
+        // Merge server jobs with any locally tracked jobs
+        const merged = new Set([...prev, ...serverActiveJobs]);
+        return Array.from(merged);
+      });
+    }
+  }, [serverActiveJobs]);
+
+  // Handle job completion - remove from active list
+  const handleJobComplete = (jobId: string) => {
+    setActiveJobs((prev) => prev.filter((id) => id !== jobId));
+  };
+
+  // Handle job cancellation - remove from active list  
+  const handleJobCancel = (jobId: string) => {
+    setActiveJobs((prev) => prev.filter((id) => id !== jobId));
+  };
 
   const handleFilesSelected = (newFiles: File[]) => {
     setFiles((prev) => [...prev, ...newFiles]);
@@ -228,7 +254,12 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
                 <h2 className="text-xl font-semibold text-white mb-4">
                   {t('progress.title')}
                 </h2>
-                <ProgressTracker jobIds={activeJobs} lang={lang} />
+                <ProgressTracker 
+                  jobIds={activeJobs} 
+                  lang={lang} 
+                  onJobComplete={handleJobComplete}
+                  onJobCancel={handleJobCancel}
+                />
               </section>
             </div>
           </div>

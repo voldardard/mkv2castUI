@@ -12,6 +12,7 @@ urlpatterns = [
     # Dashboard
     path('dashboard/', admin_views.AdminDashboardView.as_view(), name='admin-dashboard'),
     path('stats/conversions/', admin_views.AdminConversionStatsView.as_view(), name='admin-conversion-stats'),
+    path('monitoring/', admin_views.AdminSystemMetricsView.as_view(), name='admin-system-metrics'),
     
     # User management (via router)
     path('', include(router.urls)),

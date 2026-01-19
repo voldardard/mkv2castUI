@@ -18,6 +18,7 @@ import {
   Send,
   Eye,
   EyeOff,
+  Cloud,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 
@@ -52,6 +53,15 @@ interface SiteSettings {
   smtp_use_ssl: boolean;
   smtp_from_email: string;
   smtp_from_name: string;
+  // S3 Storage
+  use_s3_storage: boolean;
+  s3_endpoint: string;
+  s3_access_key: string;
+  s3_secret_key: string;
+  s3_bucket_name: string;
+  s3_region: string;
+  s3_custom_domain: string;
+  s3_configured: boolean;
 }
 
 function formatBytes(bytes: number): string {
@@ -77,6 +87,7 @@ export default function AdminSettingsPage() {
     google: false,
     github: false,
     smtp: false,
+    s3: false,
   });
 
   useEffect(() => {
@@ -586,11 +597,141 @@ export default function AdminSettingsPage() {
           </div>
         </motion.div>
 
-        {/* Maintenance Mode */}
+        {/* S3 Storage Configuration */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
+          className="glass rounded-xl p-6 lg:col-span-2"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 rounded-lg bg-cyan-500/10">
+              <Cloud className="w-5 h-5 text-cyan-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-white">S3 Storage</h2>
+            {settings.s3_configured && (
+              <span className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded">
+                Configured
+              </span>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-surface-800/50 rounded-lg">
+              <div>
+                <p className="text-white font-medium">Enable S3 Storage</p>
+                <p className="text-surface-400 text-sm">
+                  Store files on S3-compatible storage (AWS S3, MinIO, Backblaze B2, etc.)
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.use_s3_storage}
+                  onChange={(e) => handleChange('use_s3_storage', e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-surface-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-500"></div>
+              </label>
+            </div>
+
+            {settings.use_s3_storage && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-surface-700">
+                <div>
+                  <label className="block text-sm text-surface-400 mb-1">Endpoint URL</label>
+                  <input
+                    type="url"
+                    value={settings.s3_endpoint}
+                    onChange={(e) => handleChange('s3_endpoint', e.target.value)}
+                    placeholder="https://s3.amazonaws.com"
+                    className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                  />
+                  <p className="text-surface-500 text-xs mt-1">Leave empty for AWS S3</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-surface-400 mb-1">Region</label>
+                  <input
+                    type="text"
+                    value={settings.s3_region}
+                    onChange={(e) => handleChange('s3_region', e.target.value)}
+                    placeholder="us-east-1"
+                    className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm text-surface-400 mb-1">Bucket Name</label>
+                  <input
+                    type="text"
+                    value={settings.s3_bucket_name}
+                    onChange={(e) => handleChange('s3_bucket_name', e.target.value)}
+                    placeholder="my-mkv2cast-bucket"
+                    className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm text-surface-400 mb-1">Custom Domain (CDN)</label>
+                  <input
+                    type="url"
+                    value={settings.s3_custom_domain}
+                    onChange={(e) => handleChange('s3_custom_domain', e.target.value)}
+                    placeholder="https://cdn.example.com"
+                    className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                  />
+                  <p className="text-surface-500 text-xs mt-1">Optional: Custom domain for serving files</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-surface-400 mb-1">Access Key ID</label>
+                  <input
+                    type="text"
+                    value={settings.s3_access_key}
+                    onChange={(e) => handleChange('s3_access_key', e.target.value)}
+                    placeholder="AKIAIOSFODNN7EXAMPLE"
+                    className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm text-surface-400 mb-1">Secret Access Key</label>
+                  <div className="relative">
+                    <input
+                      type={showSecrets.s3 ? 'text' : 'password'}
+                      value={settings.s3_secret_key}
+                      onChange={(e) => handleChange('s3_secret_key', e.target.value)}
+                      placeholder={settings.s3_configured ? '••••••••••••••••' : 'Enter secret key'}
+                      className="w-full px-3 py-2 pr-10 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSecrets(s => ({ ...s, s3: !s.s3 }))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-surface-500 hover:text-white"
+                    >
+                      {showSecrets.s3 ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {settings.use_s3_storage && (
+              <div className="p-3 bg-surface-800/50 rounded-lg mt-4">
+                <p className="text-surface-400 text-sm">
+                  <strong className="text-white">Note:</strong> After enabling S3, new files will be stored in S3. 
+                  Existing files will remain on local storage. Use the migration tool to move existing files to S3.
+                </p>
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        {/* Maintenance Mode */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
           className="glass rounded-xl p-6 lg:col-span-2"
         >
           <div className="flex items-center gap-3 mb-6">

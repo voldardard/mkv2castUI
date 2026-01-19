@@ -4,6 +4,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+ENV DJANGO_SETTINGS_MODULE=mkv2cast_api.settings
 
 # Install system dependencies
 # Enable non-free-firmware repo for Intel VA-API drivers
@@ -33,11 +34,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install mkv2cast from official PyPI
-RUN pip install --no-cache-dir mkv2cast>=1.1.0
-
 # Copy project files
 COPY . .
+
+# Make entrypoint executable
+RUN chmod +x /app/entrypoint.sh
 
 # Create media directories with proper permissions
 RUN mkdir -p /app/media/uploads /app/media/outputs /app/static && \
@@ -45,6 +46,9 @@ RUN mkdir -p /app/media/uploads /app/media/outputs /app/static && \
 
 # Expose port
 EXPOSE 8000
+
+# Use entrypoint for migrations and setup
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Default command (can be overridden in docker-compose)
 CMD ["gunicorn", "mkv2cast_api.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4"]

@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
+import { createPortal } from 'react-dom';
 import {
   Search,
   Filter,
@@ -51,9 +52,29 @@ export default function AdminUsersPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  const handleOpenMenu = (userId: number, event: React.MouseEvent<HTMLButtonElement>) => {
+    if (activeMenu === userId) {
+      setActiveMenu(null);
+      setMenuPosition(null);
+    } else {
+      const rect = event.currentTarget.getBoundingClientRect();
+      setMenuPosition({
+        top: rect.bottom + 4,
+        left: Math.min(rect.right - 224, window.innerWidth - 240), // 224 = dropdown width (w-56)
+      });
+      setActiveMenu(userId);
+    }
+  };
 
   const fetchUsers = async () => {
     setIsLoading(true);
@@ -255,7 +276,7 @@ export default function AdminUsersPage() {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="glass rounded-xl overflow-hidden"
+        className="glass rounded-xl"
       >
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
@@ -263,8 +284,8 @@ export default function AdminUsersPage() {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div className="overflow-x-auto overflow-y-visible">
+              <table className="w-full" style={{ overflow: 'visible' }}>
                 <thead>
                   <tr className="bg-surface-800/50">
                     <th className="text-left px-4 py-3 text-surface-400 text-sm font-medium">User</th>
@@ -329,9 +350,9 @@ export default function AdminUsersPage() {
                         {new Date(user.created_at).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="relative">
+                        <div className="inline-block">
                           <button
-                            onClick={() => setActiveMenu(activeMenu === user.id ? null : user.id)}
+                            onClick={(e) => handleOpenMenu(user.id, e)}
                             disabled={actionLoading === user.id}
                             className="p-2 hover:bg-surface-700 rounded-lg transition-colors"
                           >
@@ -342,13 +363,16 @@ export default function AdminUsersPage() {
                             )}
                           </button>
                           
-                          {activeMenu === user.id && (
+                          {activeMenu === user.id && isMounted && menuPosition && createPortal(
                             <>
                               <div
-                                className="fixed inset-0 z-40"
-                                onClick={() => setActiveMenu(null)}
+                                className="fixed inset-0 z-[100]"
+                                onClick={() => { setActiveMenu(null); setMenuPosition(null); }}
                               />
-                              <div className="absolute right-0 top-full mt-1 w-56 bg-surface-800 border border-surface-700 rounded-lg shadow-xl z-50 max-h-96 overflow-y-auto">
+                              <div 
+                                className="fixed w-56 bg-surface-800 border border-surface-700 rounded-lg shadow-xl z-[101] max-h-96 overflow-y-auto"
+                                style={{ top: menuPosition.top, left: menuPosition.left }}
+                              >
                                 <div className="py-1">
                                   {/* Edit Profile */}
                                   <button
@@ -453,7 +477,8 @@ export default function AdminUsersPage() {
                                   </button>
                                 </div>
                               </div>
-                            </>
+                            </>,
+                            document.body
                           )}
                         </div>
                       </td>

@@ -389,6 +389,17 @@ class SiteSettings(models.Model):
     smtp_from_name = models.CharField(max_length=100, default='mkv2cast', blank=True)
     
     # ==========================================================================
+    # S3 Storage Configuration
+    # ==========================================================================
+    use_s3_storage = models.BooleanField(default=False)
+    s3_endpoint = models.URLField(blank=True, help_text='S3-compatible endpoint URL (e.g., https://s3.amazonaws.com)')
+    s3_access_key = models.CharField(max_length=255, blank=True)
+    s3_secret_key = models.CharField(max_length=255, blank=True)
+    s3_bucket_name = models.CharField(max_length=255, blank=True)
+    s3_region = models.CharField(max_length=50, blank=True, default='us-east-1')
+    s3_custom_domain = models.URLField(blank=True, help_text='Custom domain for serving files (e.g., CDN)')
+    
+    # ==========================================================================
     # Timestamps
     # ==========================================================================
     created_at = models.DateTimeField(auto_now_add=True)

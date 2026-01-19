@@ -44,6 +44,7 @@ class ConversionJob(models.Model):
     HW_BACKEND_CHOICES = [
         ('auto', 'Auto'),
         ('nvenc', 'NVENC'),
+        ('amf', 'AMD AMF'),
         ('vaapi', 'VAAPI'),
         ('qsv', 'QSV'),
         ('cpu', 'CPU'),
@@ -96,6 +97,7 @@ class ConversionJob(models.Model):
     vaapi_qp = models.IntegerField(default=23)
     qsv_quality = models.IntegerField(default=23)
     nvenc_cq = models.IntegerField(default=23)  # NVENC constant quality (0-51)
+    amf_quality = models.IntegerField(default=23)  # AMD AMF quality (0-51)
     
     # Encoding quality
     crf = models.IntegerField(default=20)

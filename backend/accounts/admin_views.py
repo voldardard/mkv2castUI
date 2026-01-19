@@ -3,7 +3,9 @@ Admin API views for mkv2cast.
 
 These endpoints are protected and only accessible to users with is_admin=True.
 """
-from datetime import timedelta
+import os
+import logging
+from datetime import datetime, timedelta, timezone as dt_timezone
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Sum, Avg, Q
 from django.db.models.functions import TruncDate, TruncMonth
@@ -13,7 +15,8 @@ from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+import psutil
 
 from .permissions import IsAdminUser
 from .serializers import AdminUserSerializer, SiteSettingsSerializer
@@ -21,6 +24,7 @@ from .models import SiteSettings
 from conversions.models import ConversionJob
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -114,6 +118,119 @@ class AdminDashboardView(APIView):
                 'output_files_size': total_output_size,
             },
         })
+
+
+class AdminSystemMetricsView(APIView):
+    """
+    Expose realtime system metrics for the monitoring UI.
+    """
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        now = timezone.now()
+        
+        try:
+            # CPU stats
+            cpu_per_core = psutil.cpu_percent(percpu=True)
+            cpu_total = round(sum(cpu_per_core) / len(cpu_per_core), 1) if cpu_per_core else psutil.cpu_percent()
+            load_avg = os.getloadavg() if hasattr(os, 'getloadavg') else (0.0, 0.0, 0.0)
+
+            # Memory stats
+            memory = psutil.virtual_memory()
+            swap = psutil.swap_memory()
+
+            # Disk stats
+            disk = psutil.disk_usage('/')
+            disk_io = psutil.disk_io_counters()
+
+            # Network stats
+            net_io = psutil.net_io_counters()
+
+            # Temperatures
+            temperatures = []
+            try:
+                temps_data = psutil.sensors_temperatures()
+                for label, entries in temps_data.items():
+                    for entry in entries:
+                        temperatures.append({
+                            'label': f"{label} {entry.label}".strip(),
+                            'current': entry.current,
+                        })
+            except (AttributeError, RuntimeError, psutil.Error):
+                temperatures = []
+
+            # Process stats
+            process_counts = {
+                'total': 0,
+                'running': 0,
+                'sleeping': 0,
+                'threads': 0,
+            }
+            try:
+                for proc in psutil.process_iter(['status', 'num_threads']):
+                    process_counts['total'] += 1
+                    proc_status = proc.info.get('status')
+                    if proc_status == psutil.STATUS_RUNNING:
+                        process_counts['running'] += 1
+                    if proc_status == psutil.STATUS_SLEEPING:
+                        process_counts['sleeping'] += 1
+                    process_counts['threads'] += proc.info.get('num_threads') or 0
+            except psutil.Error:
+                pass
+
+            boot_time = datetime.fromtimestamp(psutil.boot_time(), tz=dt_timezone.utc)
+            uptime_seconds = (now - boot_time).total_seconds()
+
+            return Response({
+                'available': True,
+                'timestamp': now.isoformat(),
+                'cpu': {
+                    'total': cpu_total,
+                    'per_core': cpu_per_core,
+                    'load_1': load_avg[0],
+                    'load_5': load_avg[1],
+                    'load_15': load_avg[2],
+                },
+                'memory': {
+                    'total': memory.total,
+                    'used': memory.used,
+                    'available': memory.available,
+                    'percent': memory.percent,
+                    'swap_total': swap.total,
+                    'swap_used': swap.used,
+                    'swap_percent': swap.percent,
+                },
+                'disk': {
+                    'total': disk.total,
+                    'used': disk.used,
+                    'percent': disk.percent,
+                    'read_bytes': disk_io.read_bytes if disk_io else 0,
+                    'write_bytes': disk_io.write_bytes if disk_io else 0,
+                    'read_count': disk_io.read_count if disk_io else 0,
+                    'write_count': disk_io.write_count if disk_io else 0,
+                },
+                'network': {
+                    'bytes_sent': net_io.bytes_sent if net_io else 0,
+                    'bytes_recv': net_io.bytes_recv if net_io else 0,
+                    'packets_sent': net_io.packets_sent if net_io else 0,
+                    'packets_recv': net_io.packets_recv if net_io else 0,
+                    'errin': net_io.errin if net_io else 0,
+                    'errout': net_io.errout if net_io else 0,
+                },
+                'uptime_seconds': uptime_seconds,
+                'temperatures': temperatures,
+                'processes': process_counts,
+            })
+        except Exception as exc:  # pragma: no cover - safety net
+            logger.exception("System metrics unavailable")
+            return Response(
+                {
+                    'available': False,
+                    'error': 'psutil présent mais accès aux métriques refusé (conteneur trop limité ?)',
+                    'detail': str(exc),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
 
 class AdminConversionStatsView(APIView):
@@ -212,9 +329,13 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         
         return queryset
     
-    @action(detail=True, methods=['post'])
-    def change_tier(self, request, pk=None):
-        """Change a user's subscription tier."""
+    @action(detail=True, methods=['post'], url_path='change_tier')
+    def change_tier(self, request, pk=None, lang=None):
+        """Change a user's subscription tier.
+        
+        Note: 'lang' parameter is captured from URL but not used.
+        It's included to avoid TypeError when called with language prefix.
+        """
         user = self.get_object()
         tier = request.data.get('tier')
         duration_days = int(request.data.get('duration_days', 30))
@@ -238,9 +359,13 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             'user': AdminUserSerializer(user).data
         })
     
-    @action(detail=True, methods=['post'])
-    def toggle_admin(self, request, pk=None):
-        """Toggle admin status for a user."""
+    @action(detail=True, methods=['post'], url_path='toggle_admin')
+    def toggle_admin(self, request, pk=None, lang=None):
+        """Toggle admin status for a user.
+        
+        Note: 'lang' parameter is captured from URL but not used.
+        It's included to avoid TypeError when called with language prefix.
+        """
         user = self.get_object()
         
         # Prevent self-demotion
@@ -258,9 +383,13 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             'user': AdminUserSerializer(user).data
         })
     
-    @action(detail=True, methods=['post'])
-    def unlock(self, request, pk=None):
-        """Unlock a locked user account."""
+    @action(detail=True, methods=['post'], url_path='unlock')
+    def unlock(self, request, pk=None, lang=None):
+        """Unlock a locked user account.
+        
+        Note: 'lang' parameter is captured from URL but not used.
+        It's included to avoid TypeError when called with language prefix.
+        """
         user = self.get_object()
         user.failed_login_attempts = 0
         user.locked_until = None
@@ -271,9 +400,13 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             'user': AdminUserSerializer(user).data
         })
     
-    @action(detail=True, methods=['post'])
-    def disable_2fa(self, request, pk=None):
-        """Disable 2FA for a user (admin override)."""
+    @action(detail=True, methods=['post'], url_path='disable_2fa')
+    def disable_2fa(self, request, pk=None, lang=None):
+        """Disable 2FA for a user (admin override).
+        
+        Note: 'lang' parameter is captured from URL but not used.
+        It's included to avoid TypeError when called with language prefix.
+        """
         user = self.get_object()
         
         if not user.totp_enabled:
@@ -292,9 +425,13 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             'user': AdminUserSerializer(user).data
         })
     
-    @action(detail=True, methods=['post'])
-    def reset_password(self, request, pk=None):
-        """Reset password for a user (admin override)."""
+    @action(detail=True, methods=['post'], url_path='reset_password')
+    def reset_password(self, request, pk=None, lang=None):
+        """Reset password for a user (admin override).
+        
+        Note: 'lang' parameter is captured from URL but not used.
+        It's included to avoid TypeError when called with language prefix.
+        """
         user = self.get_object()
         new_password = request.data.get('new_password')
         
@@ -403,7 +540,7 @@ class AdminFilesView(generics.ListAPIView):
             'progress': job.progress,
             'created_at': job.created_at.isoformat(),
             'completed_at': job.completed_at.isoformat() if job.completed_at else None,
-            'task_id': job.task_id if hasattr(job, 'task_id') else None,
+            'task_id': job.celery_task_id if job.celery_task_id else None,
             'is_orphaned': job.status in ['failed', 'cancelled'] and not job.output_file_size,
         } for job in jobs]
         
@@ -459,7 +596,7 @@ class AdminSiteSettingsView(APIView):
     Get or update site settings.
     """
     permission_classes = [IsAuthenticated, IsAdminUser]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
     
     def get(self, request):
         settings_obj = SiteSettings.get_settings()
@@ -468,7 +605,18 @@ class AdminSiteSettingsView(APIView):
     
     def put(self, request):
         settings_obj = SiteSettings.get_settings()
-        serializer = SiteSettingsSerializer(settings_obj, data=request.data, partial=True)
+        
+        # Create a copy of request.data to avoid modifying the original
+        data = request.data.copy()
+        
+        # Remove logo_file and favicon_file from data if they're not actual files
+        # (they might be string paths from JSON requests)
+        if 'logo_file' in data and 'logo_file' not in request.FILES:
+            data.pop('logo_file', None)
+        if 'favicon_file' in data and 'favicon_file' not in request.FILES:
+            data.pop('favicon_file', None)
+        
+        serializer = SiteSettingsSerializer(settings_obj, data=data, partial=True, context={'request': request})
         
         if serializer.is_valid():
             serializer.save()
@@ -568,7 +716,7 @@ class AdminTasksView(APIView):
         for job in jobs[start:end]:
             task_info = {
                 'id': str(job.id),
-                'task_id': job.task_id,
+                'task_id': job.celery_task_id,
                 'user': {
                     'id': job.user.id,
                     'email': job.user.email,
@@ -586,10 +734,10 @@ class AdminTasksView(APIView):
                 'is_orphaned': False,
             }
             
-            # Check if task is orphaned (has task_id but celery task is gone)
-            if job.task_id and job.status in ['pending', 'queued', 'analyzing', 'processing']:
+            # Check if task is orphaned (has celery_task_id but celery task is gone)
+            if job.celery_task_id and job.status in ['pending', 'queued', 'analyzing', 'processing']:
                 try:
-                    result = AsyncResult(job.task_id, app=app)
+                    result = AsyncResult(job.celery_task_id, app=app)
                     if result.state == 'PENDING':
                         # Task might be gone from broker
                         task_info['is_orphaned'] = True
@@ -638,12 +786,12 @@ class AdminTaskCancelView(APIView):
             )
         
         # Cancel celery task if exists
-        if job.task_id:
+        if job.celery_task_id:
             try:
                 from celery.result import AsyncResult
                 from mkv2cast_api.celery import app
                 
-                result = AsyncResult(job.task_id, app=app)
+                result = AsyncResult(job.celery_task_id, app=app)
                 result.revoke(terminate=True, signal='SIGTERM')
             except Exception as e:
                 pass  # Task might already be gone
@@ -694,8 +842,8 @@ class AdminTaskRetryView(APIView):
         from conversions.tasks import run_conversion
         task = run_conversion.delay(str(job.id))
         
-        job.task_id = task.id
-        job.save(update_fields=['task_id'])
+        job.celery_task_id = task.id
+        job.save(update_fields=['celery_task_id'])
         
         return Response({
             'message': 'Task queued for retry.',

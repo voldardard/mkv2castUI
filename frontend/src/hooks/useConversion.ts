@@ -45,10 +45,33 @@ export function useConversionJobs(lang: string) {
   return useQuery({
     queryKey: ['jobs', lang],
     queryFn: async () => {
-      const response = await api.get<{ results: ConversionJob[] }>(`/${lang}/api/jobs/`);
-      return response.data.results;
+      const response = await api.get(`/${lang}/api/jobs/`);
+      // Handle both paginated ({results: [...]}) and non-paginated ([...]) responses
+      const data = response.data;
+      if (Array.isArray(data)) {
+        return data as ConversionJob[];
+      }
+      return (data.results || []) as ConversionJob[];
     },
     refetchInterval: 5000, // Poll every 5 seconds for active jobs
+  });
+}
+
+/**
+ * Hook to get only active jobs (pending, queued, analyzing, processing)
+ */
+export function useActiveJobs(lang: string) {
+  return useQuery({
+    queryKey: ['active-jobs', lang],
+    queryFn: async () => {
+      const response = await api.get(`/${lang}/api/jobs/`);
+      const data = response.data;
+      const jobs = Array.isArray(data) ? data : (data.results || []);
+      return jobs
+        .filter((job: ConversionJob) => ['pending', 'queued', 'analyzing', 'processing'].includes(job.status))
+        .map((job: ConversionJob) => job.id);
+    },
+    refetchInterval: 5000,
   });
 }
 

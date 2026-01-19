@@ -2,6 +2,7 @@
 Tests for admin API endpoints.
 """
 import pytest
+import psutil
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -75,6 +76,63 @@ class TestAdminDashboard:
         
         # DRF returns 403 Forbidden for unauthenticated users with IsAuthenticated
         assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+
+
+@pytest.mark.django_db
+class TestAdminSystemMetrics:
+    """Tests for admin monitoring endpoint."""
+
+    def test_admin_can_access_metrics(self, admin_client, monkeypatch):
+        """Admin should see system metrics snapshot."""
+        monkeypatch.setattr(psutil, 'cpu_percent', lambda percpu=False: [10.0, 20.0] if percpu else 15.0)
+        monkeypatch.setattr(psutil, 'getloadavg', lambda: (0.1, 0.2, 0.3))
+
+        memory = type('mem', (), {'total': 100, 'used': 50, 'available': 50, 'percent': 50})
+        swap = type('swap', (), {'total': 10, 'used': 5, 'percent': 50})
+        disk = type('disk', (), {'total': 200, 'used': 100, 'percent': 50})
+        io_counters = type('io', (), {'read_bytes': 1, 'write_bytes': 2, 'read_count': 3, 'write_count': 4})
+        net_counters = type('net', (), {'bytes_sent': 5, 'bytes_recv': 6, 'packets_sent': 7, 'packets_recv': 8, 'errin': 0, 'errout': 0})
+
+        monkeypatch.setattr(psutil, 'virtual_memory', lambda: memory)
+        monkeypatch.setattr(psutil, 'swap_memory', lambda: swap)
+        monkeypatch.setattr(psutil, 'disk_usage', lambda _: disk)
+        monkeypatch.setattr(psutil, 'disk_io_counters', lambda: io_counters)
+        monkeypatch.setattr(psutil, 'net_io_counters', lambda: net_counters)
+        monkeypatch.setattr(psutil, 'boot_time', lambda: 0)
+
+        temperature_entry = type('temp', (), {'label': 'cpu', 'current': 42.0})
+        monkeypatch.setattr(psutil, 'sensors_temperatures', lambda: {'coretemp': [temperature_entry]})
+
+        process_entry = type('proc', (), {'info': {'status': psutil.STATUS_RUNNING, 'num_threads': 2}})
+        monkeypatch.setattr(psutil, 'process_iter', lambda attrs=None: [process_entry])
+
+        response = admin_client.get('/api/admin/monitoring/')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['cpu']['per_core'] == [10.0, 20.0]
+        assert response.data['disk']['write_bytes'] == 2
+        assert response.data['network']['bytes_recv'] == 6
+        assert response.data['temperatures'][0]['current'] == 42.0
+        assert response.data['available'] is True
+
+    def test_non_admin_is_denied(self, regular_client):
+        """Non-admins cannot see system metrics."""
+        response = regular_client.get('/api/admin/monitoring/')
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_backend_failure_returns_503(self, admin_client, monkeypatch):
+        """If psutil fails hard, we surface a 503 with available=false."""
+        def crash(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr('accounts.admin_views.psutil.cpu_percent', crash)
+
+        response = admin_client.get('/api/admin/monitoring/')
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.data['available'] is False
+        assert 'métriques' in response.data['error']
+        assert response.data.get('detail') == 'boom'
 
 
 @pytest.mark.django_db

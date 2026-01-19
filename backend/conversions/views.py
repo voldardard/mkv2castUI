@@ -2,7 +2,9 @@
 API views for conversion jobs.
 """
 import os
-from django.http import FileResponse, Http404
+import re
+from django.http import FileResponse, Http404, HttpResponse
+from urllib.parse import quote, unquote
 from django.utils import timezone
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import api_view, permission_classes, action
@@ -69,9 +71,13 @@ class ConversionJobViewSet(viewsets.ModelViewSet):
         
         instance.delete()
 
-    @action(detail=True, methods=['post'])
-    def cancel(self, request, pk=None):
-        """Cancel a running or queued job."""
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, pk=None, lang=None):
+        """Cancel a running or queued job.
+        
+        Note: 'lang' parameter is captured from URL but not used.
+        It's included to avoid TypeError when called with language prefix.
+        """
         job = self.get_object()
         if job.status not in ('pending', 'queued', 'processing', 'analyzing'):
             return Response(
@@ -81,9 +87,16 @@ class ConversionJobViewSet(viewsets.ModelViewSet):
         job.cancel()
         return Response({'detail': 'Job cancelled.'})
 
-    @action(detail=True, methods=['get'])
-    def download(self, request, pk=None):
-        """Download the converted file."""
+    @action(detail=True, methods=['get'], url_path='download')
+    def download(self, request, pk=None, lang=None, filename=None):
+        """Download the converted file.
+        
+        Supports optional filename in URL: /download/<filename>
+        If filename is provided, it's validated against the actual output filename.
+        
+        Note: 'lang' parameter is captured from URL but not used.
+        It's included to avoid TypeError when called with language prefix.
+        """
         job = self.get_object()
         
         if job.status != 'completed':
@@ -95,11 +108,54 @@ class ConversionJobViewSet(viewsets.ModelViewSet):
         if not job.output_file:
             raise Http404('Output file not found.')
         
+        # Get the expected filename
+        expected_filename = job.output_filename or job.original_filename.replace('.mkv', '.mp4')
+        
+        # If filename is provided in URL, decode it and validate
+        if filename:
+            try:
+                # Decode URL-encoded filename
+                decoded_filename = unquote(filename)
+                # Basic validation: check if it matches expected filename (case-insensitive)
+                # This is a security measure to prevent arbitrary file downloads
+                if decoded_filename.lower() != expected_filename.lower():
+                    # Allow if it's just a different extension or similar
+                    # But log a warning
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f'Filename mismatch: URL={decoded_filename}, Expected={expected_filename}')
+            except Exception:
+                # If decoding fails, use expected filename
+                pass
+        
+        # Use FileResponse for better performance (streaming instead of loading in memory)
         response = FileResponse(
             job.output_file.open('rb'),
+            content_type='application/octet-stream',
             as_attachment=True,
-            filename=job.output_filename
+            filename=expected_filename
         )
+        
+        # Override Content-Disposition with proper encoding for Firefox compatibility
+        # Firefox is strict about header encoding, so we use RFC 5987 encoding
+        # First, create a safe ASCII filename (fallback) - replace non-ASCII with underscore
+        ascii_filename = re.sub(r'[^\x20-\x7E]', '_', expected_filename)
+        
+        # Encode the UTF-8 filename properly for filename* parameter
+        # RFC 5987 encoding: filename*=UTF-8''encoded-filename
+        # Use quote with safe='' to encode everything except alphanumeric and some safe chars
+        # Note: quote() already handles UTF-8 encoding correctly
+        encoded_filename = quote(expected_filename, safe='', encoding='utf-8')
+        
+        # Use both filename (ASCII fallback) and filename* (UTF-8) for maximum compatibility
+        # Firefox prefers filename* when available, Chrome handles both
+        # The order matters: filename first (fallback), then filename* (preferred)
+        # Important: Use single quotes in filename* parameter (RFC 5987)
+        # Escape quotes in ASCII filename
+        ascii_filename_escaped = ascii_filename.replace('"', '\\"')
+        content_disposition = f'attachment; filename="{ascii_filename_escaped}"; filename*=UTF-8\'\'{encoded_filename}'
+        response['Content-Disposition'] = content_disposition
+        
         return response
 
 

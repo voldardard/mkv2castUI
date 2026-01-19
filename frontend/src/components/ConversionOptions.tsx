@@ -15,6 +15,7 @@ export interface ConversionOptionsType {
   vaapi_qp: number;
   qsv_quality: number;
   nvenc_cq: number;
+  amf_quality: number;
   // Codec decisions
   force_h264: boolean;
   allow_hevc: boolean;
@@ -148,12 +149,13 @@ export function ConversionOptions({ options, onChange, lang }: ConversionOptions
         <label className="block text-sm font-medium text-surface-300 mb-3">
           {t('options.backend')}
         </label>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {[
             { id: 'auto', label: 'Auto' },
-            { id: 'nvenc', label: 'NVENC' },
-            { id: 'vaapi', label: 'VAAPI' },
-            { id: 'qsv', label: 'QSV' },
+            { id: 'nvenc', label: 'NVENC', hint: 'NVIDIA' },
+            { id: 'amf', label: 'AMF', hint: 'AMD' },
+            { id: 'vaapi', label: 'VAAPI', hint: 'Intel/AMD' },
+            { id: 'qsv', label: 'QSV', hint: 'Intel' },
             { id: 'cpu', label: 'CPU' },
           ].map((backend) => (
             <button
