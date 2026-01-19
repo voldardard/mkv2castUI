@@ -79,19 +79,45 @@ def build_mkv2cast_command(job: ConversionJob, input_path: str, output_path: str
     # Container
     cmd.extend(['--container', job.container])
     
-    # Quality settings (CPU only)
+    # Quality settings based on backend
     if job.hw_backend == 'cpu' or job.hw_backend == 'auto':
         cmd.extend(['--crf', str(job.crf)])
         cmd.extend(['--preset', job.preset])
     
-    # VAAPI/QSV quality
+    # Hardware-specific quality settings
     if job.hw_backend == 'vaapi':
         cmd.extend(['--vaapi-qp', str(job.vaapi_qp)])
     elif job.hw_backend == 'qsv':
         cmd.extend(['--qsv-quality', str(job.qsv_quality)])
+    elif job.hw_backend == 'nvenc':
+        cmd.extend(['--nvenc-cq', str(job.nvenc_cq)])
     
     # Audio
     cmd.extend(['--abr', job.audio_bitrate])
+    
+    # Audio/Subtitle selection (new mkv2cast v1.1+ options)
+    if job.audio_lang:
+        cmd.extend(['--audio-lang', job.audio_lang])
+    if job.audio_track is not None:
+        cmd.extend(['--audio-track', str(job.audio_track)])
+    if job.subtitle_lang:
+        cmd.extend(['--subtitle-lang', job.subtitle_lang])
+    if job.subtitle_track is not None:
+        cmd.extend(['--subtitle-track', str(job.subtitle_track)])
+    if job.prefer_forced_subs:
+        cmd.append('--prefer-forced-subs')
+    else:
+        cmd.append('--no-forced-subs')
+    if job.no_subtitles:
+        cmd.append('--no-subtitles')
+    
+    # Optimization options
+    if job.skip_when_ok:
+        cmd.append('--skip-when-ok')
+    else:
+        cmd.append('--no-skip-when-ok')
+    if job.no_silence:
+        cmd.append('--no-silence')
     
     # Codec decisions
     if job.force_h264:
@@ -267,8 +293,12 @@ def run_conversion(self, job_id: str):
         # Add video encoding options
         if analysis['needs_video_transcode']:
             if job.hw_backend == 'vaapi':
+                # Get VAAPI device - empty means auto-detect, use common default
+                vaapi_device = getattr(settings, 'MKV2CAST_VAAPI_DEVICE', '')
+                if not vaapi_device:
+                    vaapi_device = '/dev/dri/renderD128'  # Common default for Intel/AMD
                 ffmpeg_cmd.extend([
-                    '-vaapi_device', settings.MKV2CAST_VAAPI_DEVICE,
+                    '-vaapi_device', vaapi_device,
                     '-vf', 'format=nv12,hwupload',
                     '-c:v', 'h264_vaapi',
                     '-qp', str(job.vaapi_qp),
@@ -278,6 +308,13 @@ def run_conversion(self, job_id: str):
                     '-vf', 'format=nv12',
                     '-c:v', 'h264_qsv',
                     '-global_quality', str(job.qsv_quality),
+                ])
+            elif job.hw_backend == 'nvenc':
+                ffmpeg_cmd.extend([
+                    '-c:v', 'h264_nvenc',
+                    '-cq', str(job.nvenc_cq),
+                    '-preset', 'p4',  # Good balance quality/speed
+                    '-tune', 'hq',
                 ])
             else:
                 ffmpeg_cmd.extend([

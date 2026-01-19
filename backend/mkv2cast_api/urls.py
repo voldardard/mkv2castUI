@@ -10,16 +10,18 @@ from django.conf.urls.static import static
 LANG_PREFIX = r'^(?P<lang>fr|en|de|it|es)/'
 
 urlpatterns = [
-    # Admin
+    # Django Admin
     path('admin/', admin.site.urls),
     
     # API routes without language prefix
     path('api/', include('conversions.urls')),
     path('api/auth/', include('accounts.urls')),
+    path('api/admin/', include('accounts.admin_urls')),
     
     # API routes with language prefix (fr, en, de, it, es)
     re_path(LANG_PREFIX + r'api/', include('conversions.urls')),
     re_path(LANG_PREFIX + r'api/auth/', include('accounts.urls')),
+    re_path(LANG_PREFIX + r'api/admin/', include('accounts.admin_urls')),
     
     # Django Allauth
     path('accounts/', include('allauth.urls')),

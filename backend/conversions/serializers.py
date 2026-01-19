@@ -30,6 +30,7 @@ class ConversionJobCreateSerializer(serializers.ModelSerializer):
             'hw_backend',
             'vaapi_qp',
             'qsv_quality',
+            'nvenc_cq',
             # Encoding quality
             'crf',
             'preset',
@@ -39,6 +40,16 @@ class ConversionJobCreateSerializer(serializers.ModelSerializer):
             'allow_hevc',
             'force_aac',
             'keep_surround',
+            # Audio/Subtitle selection
+            'audio_lang',
+            'audio_track',
+            'subtitle_lang',
+            'subtitle_track',
+            'prefer_forced_subs',
+            'no_subtitles',
+            # Optimization
+            'skip_when_ok',
+            'no_silence',
             # Integrity checks
             'integrity_check',
             'deep_check',
@@ -54,6 +65,24 @@ class ConversionJobCreateSerializer(serializers.ModelSerializer):
         """Validate VAAPI QP is within acceptable range."""
         if not 0 <= value <= 51:
             raise serializers.ValidationError('VAAPI QP must be between 0 and 51')
+        return value
+
+    def validate_nvenc_cq(self, value):
+        """Validate NVENC CQ is within acceptable range."""
+        if not 0 <= value <= 51:
+            raise serializers.ValidationError('NVENC CQ must be between 0 and 51')
+        return value
+
+    def validate_audio_track(self, value):
+        """Validate audio track index."""
+        if value is not None and value < 0:
+            raise serializers.ValidationError('Audio track index must be non-negative')
+        return value
+
+    def validate_subtitle_track(self, value):
+        """Validate subtitle track index."""
+        if value is not None and value < 0:
+            raise serializers.ValidationError('Subtitle track index must be non-negative')
         return value
 
 
@@ -82,12 +111,25 @@ class ConversionJobSerializer(serializers.ModelSerializer):
             'crf',
             'preset',
             'audio_bitrate',
+            'vaapi_qp',
+            'qsv_quality',
+            'nvenc_cq',
             'force_h264',
             'allow_hevc',
             'force_aac',
             'keep_surround',
             'integrity_check',
             'deep_check',
+            # Audio/Subtitle selection
+            'audio_lang',
+            'audio_track',
+            'subtitle_lang',
+            'subtitle_track',
+            'prefer_forced_subs',
+            'no_subtitles',
+            # Optimization
+            'skip_when_ok',
+            'no_silence',
             # Analysis
             'needs_video_transcode',
             'needs_audio_transcode',

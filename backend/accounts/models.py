@@ -1,6 +1,7 @@
 """
 Custom user model and profile for mkv2cast.
 """
+import secrets
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
@@ -13,6 +14,40 @@ class User(AbstractUser):
     Adds additional fields for mkv2cast-specific settings and subscription management.
     """
     email = models.EmailField(unique=True)
+    
+    # ==========================================================================
+    # Authentication Provider
+    # ==========================================================================
+    AUTH_PROVIDER_CHOICES = [
+        ('local', 'Local'),
+        ('google', 'Google'),
+        ('github', 'GitHub'),
+    ]
+    auth_provider = models.CharField(
+        max_length=20,
+        choices=AUTH_PROVIDER_CHOICES,
+        default='local'
+    )
+    
+    # ==========================================================================
+    # Two-Factor Authentication (2FA)
+    # ==========================================================================
+    totp_secret = models.CharField(max_length=64, blank=True, null=True)
+    totp_enabled = models.BooleanField(default=False)
+    backup_codes = models.JSONField(default=list, blank=True)
+    
+    # ==========================================================================
+    # Security Fields
+    # ==========================================================================
+    failed_login_attempts = models.IntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+    last_login_ip = models.GenericIPAddressField(null=True, blank=True)
+    password_changed_at = models.DateTimeField(null=True, blank=True)
+    
+    # ==========================================================================
+    # Admin Role (separate from Django's is_staff)
+    # ==========================================================================
+    is_admin = models.BooleanField(default=False)
     
     # ==========================================================================
     # Subscription Tier System
@@ -131,6 +166,52 @@ class User(AbstractUser):
     def __str__(self):
         return self.email
 
+    # ==========================================================================
+    # Security Methods
+    # ==========================================================================
+    
+    @property
+    def is_locked(self):
+        """Check if account is currently locked."""
+        if self.locked_until is None:
+            return False
+        return self.locked_until > timezone.now()
+    
+    def record_failed_login(self):
+        """Record a failed login attempt."""
+        self.failed_login_attempts += 1
+        # Lock account after 10 failed attempts
+        if self.failed_login_attempts >= 10:
+            self.locked_until = timezone.now() + timezone.timedelta(minutes=30)
+        self.save(update_fields=['failed_login_attempts', 'locked_until'])
+    
+    def reset_failed_attempts(self):
+        """Reset failed login attempts on successful login."""
+        if self.failed_login_attempts > 0 or self.locked_until:
+            self.failed_login_attempts = 0
+            self.locked_until = None
+            self.save(update_fields=['failed_login_attempts', 'locked_until'])
+    
+    def generate_backup_codes(self, count=10):
+        """Generate new backup codes for 2FA recovery."""
+        codes = [secrets.token_hex(4).upper() for _ in range(count)]
+        self.backup_codes = codes
+        self.save(update_fields=['backup_codes'])
+        return codes
+    
+    def use_backup_code(self, code):
+        """Use a backup code and remove it from the list."""
+        code = code.upper().replace('-', '').replace(' ', '')
+        if code in self.backup_codes:
+            self.backup_codes.remove(code)
+            self.save(update_fields=['backup_codes'])
+            return True
+        return False
+
+    # ==========================================================================
+    # Storage Properties
+    # ==========================================================================
+    
     @property
     def storage_remaining(self):
         """Get remaining storage in bytes."""
@@ -143,6 +224,10 @@ class User(AbstractUser):
             return 100
         return min(100, (self.storage_used / self.storage_limit) * 100)
 
+    # ==========================================================================
+    # Subscription Properties
+    # ==========================================================================
+    
     @property
     def is_subscription_active(self):
         """Check if user has an active paid subscription."""
@@ -221,3 +306,93 @@ class User(AbstractUser):
         self.subscription_expires_at = timezone.now() + timezone.timedelta(days=duration_days)
         self.apply_tier_limits()
         self.save()
+
+
+class SiteSettings(models.Model):
+    """
+    Singleton model for site-wide settings and white-label branding.
+    
+    Only one instance should exist, managed via get_settings() class method.
+    """
+    # ==========================================================================
+    # Branding
+    # ==========================================================================
+    site_name = models.CharField(max_length=100, default='mkv2cast')
+    site_tagline = models.CharField(max_length=200, default='Convert videos for Chromecast', blank=True)
+    logo_url = models.URLField(blank=True)
+    logo_file = models.ImageField(upload_to='branding/', blank=True, null=True)
+    favicon_file = models.ImageField(upload_to='branding/', blank=True, null=True)
+    primary_color = models.CharField(max_length=7, default='#6366f1')  # Hex color
+    secondary_color = models.CharField(max_length=7, default='#8b5cf6')
+    
+    # ==========================================================================
+    # Default Conversion Settings
+    # ==========================================================================
+    default_container = models.CharField(
+        max_length=10,
+        choices=[('mkv', 'MKV'), ('mp4', 'MP4')],
+        default='mkv'
+    )
+    default_hw_backend = models.CharField(
+        max_length=10,
+        choices=[
+            ('auto', 'Auto'),
+            ('vaapi', 'VAAPI'),
+            ('qsv', 'QSV'),
+            ('cpu', 'CPU'),
+        ],
+        default='auto'
+    )
+    default_quality_preset = models.CharField(
+        max_length=20,
+        choices=[
+            ('fast', 'Fast'),
+            ('balanced', 'Balanced'),
+            ('quality', 'High Quality'),
+        ],
+        default='balanced'
+    )
+    max_file_size = models.BigIntegerField(default=10 * 1024 * 1024 * 1024)  # 10GB
+    
+    # ==========================================================================
+    # Server Settings
+    # ==========================================================================
+    maintenance_mode = models.BooleanField(default=False)
+    maintenance_message = models.TextField(
+        default='The service is currently under maintenance. Please try again later.',
+        blank=True
+    )
+    allow_registration = models.BooleanField(default=True)
+    require_email_verification = models.BooleanField(default=False)
+    
+    # ==========================================================================
+    # Timestamps
+    # ==========================================================================
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'accounts_site_settings'
+        verbose_name = 'Site Settings'
+        verbose_name_plural = 'Site Settings'
+    
+    def __str__(self):
+        return f"Site Settings ({self.site_name})"
+    
+    def save(self, *args, **kwargs):
+        """Ensure only one instance exists."""
+        self.pk = 1
+        super().save(*args, **kwargs)
+    
+    @classmethod
+    def get_settings(cls):
+        """Get or create the singleton settings instance."""
+        settings, created = cls.objects.get_or_create(pk=1)
+        return settings
+    
+    @property
+    def logo(self):
+        """Get the logo URL (file takes precedence over URL)."""
+        if self.logo_file:
+            return self.logo_file.url
+        return self.logo_url or None

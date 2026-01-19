@@ -1,11 +1,21 @@
 """
-Serializers for user accounts.
+Serializers for user accounts and authentication.
 """
+import re
 from rest_framework import serializers
-from django.contrib.auth import get_user_model
+from django.contrib.auth import get_user_model, authenticate
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
+
+from .models import SiteSettings
 
 User = get_user_model()
 
+
+# =============================================================================
+# User Serializers
+# =============================================================================
 
 class UserSerializer(serializers.ModelSerializer):
     """
@@ -13,6 +23,7 @@ class UserSerializer(serializers.ModelSerializer):
     """
     storage_remaining = serializers.ReadOnlyField()
     storage_used_percent = serializers.ReadOnlyField()
+    has_2fa = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -22,23 +33,24 @@ class UserSerializer(serializers.ModelSerializer):
             'username',
             'first_name',
             'last_name',
+            'auth_provider',
             'preferred_language',
             'default_container',
             'default_hw_backend',
             'default_quality_preset',
+            'subscription_tier',
             'storage_used',
             'storage_limit',
             'storage_remaining',
             'storage_used_percent',
+            'is_admin',
+            'has_2fa',
             'created_at',
         ]
-        read_only_fields = [
-            'id',
-            'email',
-            'storage_used',
-            'storage_limit',
-            'created_at',
-        ]
+        read_only_fields = fields
+    
+    def get_has_2fa(self, obj):
+        return obj.totp_enabled
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -54,4 +66,396 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'default_container',
             'default_hw_backend',
             'default_quality_preset',
+        ]
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    """
+    Serializer for admin user management (full access).
+    """
+    storage_remaining = serializers.ReadOnlyField()
+    storage_used_percent = serializers.ReadOnlyField()
+    has_2fa = serializers.SerializerMethodField()
+    conversions_remaining = serializers.ReadOnlyField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id',
+            'email',
+            'username',
+            'first_name',
+            'last_name',
+            'auth_provider',
+            'is_active',
+            'is_admin',
+            'is_staff',
+            'subscription_tier',
+            'subscription_expires_at',
+            'max_concurrent_jobs',
+            'max_file_size',
+            'monthly_conversion_limit',
+            'conversions_this_month',
+            'conversions_remaining',
+            'storage_used',
+            'storage_limit',
+            'storage_remaining',
+            'storage_used_percent',
+            'preferred_language',
+            'has_2fa',
+            'failed_login_attempts',
+            'locked_until',
+            'last_login',
+            'last_login_ip',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'id',
+            'auth_provider',
+            'conversions_remaining',
+            'storage_remaining',
+            'storage_used_percent',
+            'failed_login_attempts',
+            'locked_until',
+            'last_login',
+            'last_login_ip',
+            'created_at',
+            'updated_at',
+        ]
+    
+    def get_has_2fa(self, obj):
+        return obj.totp_enabled
+
+
+# =============================================================================
+# Registration Serializers
+# =============================================================================
+
+class RegistrationSerializer(serializers.Serializer):
+    """
+    Serializer for user registration.
+    """
+    email = serializers.EmailField()
+    username = serializers.CharField(min_length=3, max_length=30)
+    password = serializers.CharField(write_only=True, min_length=8)
+    password_confirm = serializers.CharField(write_only=True)
+    first_name = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    last_name = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    
+    def validate_email(self, value):
+        """Check if email is already registered."""
+        email = value.lower()
+        if User.objects.filter(email=email).exists():
+            raise serializers.ValidationError("This email is already registered.")
+        return email
+    
+    def validate_username(self, value):
+        """Validate username format and uniqueness."""
+        # Check format (alphanumeric and underscores only)
+        if not re.match(r'^[a-zA-Z0-9_]+$', value):
+            raise serializers.ValidationError(
+                "Username can only contain letters, numbers, and underscores."
+            )
+        
+        # Check uniqueness (case-insensitive)
+        if User.objects.filter(username__iexact=value).exists():
+            raise serializers.ValidationError("This username is already taken.")
+        
+        return value
+    
+    def validate_password(self, value):
+        """Validate password strength using Django's validators."""
+        try:
+            validate_password(value)
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(list(e.messages))
+        return value
+    
+    def validate(self, data):
+        """Check that passwords match."""
+        if data.get('password') != data.get('password_confirm'):
+            raise serializers.ValidationError({
+                'password_confirm': "Passwords do not match."
+            })
+        return data
+    
+    def create(self, validated_data):
+        """Create and return a new user."""
+        validated_data.pop('password_confirm')
+        
+        user = User.objects.create_user(
+            email=validated_data['email'],
+            username=validated_data['username'],
+            password=validated_data['password'],
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', ''),
+            auth_provider='local',
+        )
+        
+        # Apply tier limits
+        user.apply_tier_limits()
+        
+        return user
+
+
+# =============================================================================
+# Login Serializers
+# =============================================================================
+
+class LoginSerializer(serializers.Serializer):
+    """
+    Serializer for user login.
+    """
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+    totp_code = serializers.CharField(required=False, allow_blank=True)
+    
+    def validate(self, data):
+        email = data.get('email', '').lower()
+        password = data.get('password')
+        
+        # Try to get user
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({
+                'email': "Invalid email or password."
+            })
+        
+        # Check if account is locked
+        if user.is_locked:
+            remaining = int((user.locked_until - timezone.now()).total_seconds() / 60)
+            raise serializers.ValidationError({
+                'email': f"Account is locked. Please try again in {remaining} minutes."
+            })
+        
+        # Check if user is using SSO
+        if user.auth_provider != 'local':
+            raise serializers.ValidationError({
+                'email': f"This account uses {user.auth_provider} login. Please sign in with {user.auth_provider}."
+            })
+        
+        # Authenticate
+        authenticated_user = authenticate(
+            username=email,
+            password=password
+        )
+        
+        if not authenticated_user:
+            # Record failed attempt
+            user.record_failed_login()
+            raise serializers.ValidationError({
+                'email': "Invalid email or password."
+            })
+        
+        # Check if 2FA is enabled
+        if user.totp_enabled:
+            totp_code = data.get('totp_code', '').strip()
+            if not totp_code:
+                # Return partial success - need 2FA
+                data['user'] = user
+                data['requires_2fa'] = True
+                return data
+        
+        # Reset failed attempts on success
+        user.reset_failed_attempts()
+        
+        data['user'] = user
+        data['requires_2fa'] = False
+        return data
+
+
+class TwoFactorLoginSerializer(serializers.Serializer):
+    """
+    Serializer for completing 2FA login.
+    """
+    email = serializers.EmailField()
+    code = serializers.CharField()
+    is_backup_code = serializers.BooleanField(default=False)
+    
+    def validate(self, data):
+        email = data.get('email', '').lower()
+        code = data.get('code', '').strip()
+        is_backup = data.get('is_backup_code', False)
+        
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({'code': "Invalid request."})
+        
+        if not user.totp_enabled:
+            raise serializers.ValidationError({'code': "2FA is not enabled."})
+        
+        from .totp import TOTPManager
+        totp_manager = TOTPManager(user)
+        
+        if is_backup:
+            if not totp_manager.verify_backup_code(code):
+                raise serializers.ValidationError({'code': "Invalid backup code."})
+        else:
+            if not totp_manager.verify(code):
+                raise serializers.ValidationError({'code': "Invalid verification code."})
+        
+        data['user'] = user
+        return data
+
+
+# =============================================================================
+# 2FA Serializers
+# =============================================================================
+
+class TOTPSetupSerializer(serializers.Serializer):
+    """
+    Serializer for initiating 2FA setup.
+    Returns the QR code and secret for the user.
+    """
+    pass  # No input needed, just triggers setup
+
+
+class TOTPVerifySerializer(serializers.Serializer):
+    """
+    Serializer for verifying and enabling 2FA.
+    """
+    code = serializers.CharField(min_length=6, max_length=6)
+    
+    def validate_code(self, value):
+        # Clean the code
+        code = value.replace(' ', '').replace('-', '')
+        if not code.isdigit():
+            raise serializers.ValidationError("Code must contain only digits.")
+        return code
+
+
+class TOTPDisableSerializer(serializers.Serializer):
+    """
+    Serializer for disabling 2FA.
+    Requires password confirmation.
+    """
+    password = serializers.CharField(write_only=True)
+    
+    def validate_password(self, value):
+        user = self.context.get('user')
+        if not user.check_password(value):
+            raise serializers.ValidationError("Invalid password.")
+        return value
+
+
+# =============================================================================
+# Password Serializers
+# =============================================================================
+
+class PasswordChangeSerializer(serializers.Serializer):
+    """
+    Serializer for changing password (authenticated user).
+    """
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    new_password_confirm = serializers.CharField(write_only=True)
+    
+    def validate_current_password(self, value):
+        user = self.context.get('user')
+        if not user.check_password(value):
+            raise serializers.ValidationError("Current password is incorrect.")
+        return value
+    
+    def validate_new_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(list(e.messages))
+        return value
+    
+    def validate(self, data):
+        if data['new_password'] != data['new_password_confirm']:
+            raise serializers.ValidationError({
+                'new_password_confirm': "Passwords do not match."
+            })
+        return data
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """
+    Serializer for requesting a password reset.
+    """
+    email = serializers.EmailField()
+    
+    def validate_email(self, value):
+        return value.lower()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """
+    Serializer for confirming password reset with token.
+    """
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    new_password_confirm = serializers.CharField(write_only=True)
+    
+    def validate_new_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(list(e.messages))
+        return value
+    
+    def validate(self, data):
+        if data['new_password'] != data['new_password_confirm']:
+            raise serializers.ValidationError({
+                'new_password_confirm': "Passwords do not match."
+            })
+        return data
+
+
+# =============================================================================
+# Site Settings Serializers
+# =============================================================================
+
+class SiteSettingsSerializer(serializers.ModelSerializer):
+    """
+    Serializer for site settings.
+    """
+    logo = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = SiteSettings
+        fields = [
+            'site_name',
+            'site_tagline',
+            'logo_url',
+            'logo_file',
+            'logo',
+            'favicon_file',
+            'primary_color',
+            'secondary_color',
+            'default_container',
+            'default_hw_backend',
+            'default_quality_preset',
+            'max_file_size',
+            'maintenance_mode',
+            'maintenance_message',
+            'allow_registration',
+            'require_email_verification',
+            'updated_at',
+        ]
+        read_only_fields = ['updated_at', 'logo']
+
+
+class PublicSiteSettingsSerializer(serializers.ModelSerializer):
+    """
+    Serializer for public site settings (no sensitive data).
+    """
+    logo = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = SiteSettings
+        fields = [
+            'site_name',
+            'site_tagline',
+            'logo',
+            'primary_color',
+            'secondary_color',
+            'maintenance_mode',
+            'maintenance_message',
+            'allow_registration',
         ]

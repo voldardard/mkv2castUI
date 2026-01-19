@@ -43,6 +43,7 @@ class ConversionJob(models.Model):
     
     HW_BACKEND_CHOICES = [
         ('auto', 'Auto'),
+        ('nvenc', 'NVENC'),
         ('vaapi', 'VAAPI'),
         ('qsv', 'QSV'),
         ('cpu', 'CPU'),
@@ -94,6 +95,7 @@ class ConversionJob(models.Model):
     hw_backend = models.CharField(max_length=10, choices=HW_BACKEND_CHOICES, default='auto')
     vaapi_qp = models.IntegerField(default=23)
     qsv_quality = models.IntegerField(default=23)
+    nvenc_cq = models.IntegerField(default=23)  # NVENC constant quality (0-51)
     
     # Encoding quality
     crf = models.IntegerField(default=20)
@@ -109,6 +111,22 @@ class ConversionJob(models.Model):
     # Integrity checks
     integrity_check = models.BooleanField(default=True)
     deep_check = models.BooleanField(default=False)
+    
+    # =========================================================================
+    # Audio/Subtitle Selection (new mkv2cast v1.1+ options)
+    # =========================================================================
+    audio_lang = models.CharField(max_length=50, blank=True, default='')  # e.g., "fre,fra,eng"
+    audio_track = models.IntegerField(null=True, blank=True)  # Explicit track index (0-based)
+    subtitle_lang = models.CharField(max_length=50, blank=True, default='')  # e.g., "fre,eng"
+    subtitle_track = models.IntegerField(null=True, blank=True)  # Explicit track index (0-based)
+    prefer_forced_subs = models.BooleanField(default=True)  # Prefer forced subtitles
+    no_subtitles = models.BooleanField(default=False)  # Disable all subtitles
+    
+    # =========================================================================
+    # Optimization Options
+    # =========================================================================
+    skip_when_ok = models.BooleanField(default=True)  # Skip if already compatible
+    no_silence = models.BooleanField(default=False)  # Keep silence in audio
     
     # =========================================================================
     # Analysis results (from mkv2cast's decide_for function)

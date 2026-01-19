@@ -224,7 +224,19 @@ if USE_S3:
 # mkv2cast Settings
 # =============================================================================
 MKV2CAST_DEFAULT_HW = os.environ.get('MKV2CAST_DEFAULT_HW', 'auto')
-MKV2CAST_VAAPI_DEVICE = os.environ.get('MKV2CAST_VAAPI_DEVICE', '/dev/dri/renderD128')
+
+# VAAPI device - empty string means auto-detect
+MKV2CAST_VAAPI_DEVICE = os.environ.get('MKV2CAST_VAAPI_DEVICE', '')
+
+# Default encoding quality settings
+MKV2CAST_DEFAULT_CRF = int(os.environ.get('MKV2CAST_DEFAULT_CRF', '23'))
+MKV2CAST_DEFAULT_PRESET = os.environ.get('MKV2CAST_DEFAULT_PRESET', 'medium')
+MKV2CAST_DEFAULT_VAAPI_QP = int(os.environ.get('MKV2CAST_DEFAULT_VAAPI_QP', '23'))
+MKV2CAST_DEFAULT_QSV_QUALITY = int(os.environ.get('MKV2CAST_DEFAULT_QSV_QUALITY', '23'))
+MKV2CAST_DEFAULT_AUDIO_BITRATE = os.environ.get('MKV2CAST_DEFAULT_AUDIO_BITRATE', '192k')
+
+# Maximum file size for uploads (default 10GB)
+MKV2CAST_MAX_FILE_SIZE = int(os.environ.get('MKV2CAST_MAX_FILE_SIZE', str(10 * 1024 * 1024 * 1024)))
 
 # =============================================================================
 # Authentication Mode
@@ -232,6 +244,14 @@ MKV2CAST_VAAPI_DEVICE = os.environ.get('MKV2CAST_VAAPI_DEVICE', '/dev/dri/render
 # When False, authentication is disabled and an anonymous local user is used
 REQUIRE_AUTH = os.environ.get('REQUIRE_AUTH', 'true').lower() in ('true', '1', 'yes')
 
-# File upload limits
+# =============================================================================
+# File Upload Limits
+# =============================================================================
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB in memory
 FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
+
+# =============================================================================
+# Gunicorn Settings (used in docker-compose command)
+# =============================================================================
+GUNICORN_WORKERS = int(os.environ.get('GUNICORN_WORKERS', '4'))
+GUNICORN_TIMEOUT = int(os.environ.get('GUNICORN_TIMEOUT', '120'))

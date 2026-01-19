@@ -25,8 +25,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install mkv2cast from TestPyPI (with fallback to PyPI for dependencies)
-RUN pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ mkv2cast
+# Install mkv2cast from official PyPI
+RUN pip install --no-cache-dir mkv2cast>=1.1.0
 
 # Copy project files
 COPY . .
