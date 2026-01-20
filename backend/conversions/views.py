@@ -217,7 +217,7 @@ class PresignedUploadView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    def post(self, request):
+    def post(self, request, **kwargs):
         filename = request.data.get('filename')
         file_size = request.data.get('size')
         
@@ -306,7 +306,7 @@ class ConfirmUploadView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    def post(self, request, file_id):
+    def post(self, request, file_id, **kwargs):
         try:
             pending_file = PendingFile.objects.get(id=file_id, user=request.user)
         except PendingFile.DoesNotExist:
@@ -365,7 +365,7 @@ class FileMetadataView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    def get(self, request, file_id):
+    def get(self, request, file_id, **kwargs):
         try:
             pending_file = PendingFile.objects.get(id=file_id, user=request.user)
         except PendingFile.DoesNotExist:
@@ -378,6 +378,12 @@ class FileMetadataView(APIView):
             return Response({
                 'status': 'analyzing',
                 'message': 'File analysis in progress. Please check again in a moment.',
+            }, status=status.HTTP_202_ACCEPTED)
+        
+        if pending_file.status == 'uploading':
+            return Response({
+                'status': 'uploading',
+                'message': 'File upload in progress. Please wait for upload to complete.',
             }, status=status.HTTP_202_ACCEPTED)
         
         if pending_file.status != 'ready':
@@ -413,7 +419,7 @@ class CreateJobFromFileView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    def post(self, request):
+    def post(self, request, **kwargs):
         file_id = request.data.get('file_id')
         options = request.data.get('options', {})
         

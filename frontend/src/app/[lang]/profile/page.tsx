@@ -29,7 +29,8 @@ interface UserProfile {
   monthly_conversion_limit: number;
   conversions_this_month: number;
   auth_provider: string;
-  totp_enabled: boolean;
+  totp_enabled?: boolean;
+  has_2fa?: boolean;
   avatar_url: string | null;
   created_at: string;
 }
@@ -493,17 +494,29 @@ export default function ProfilePage() {
                         <div>
                           <h3 className="font-medium text-white">Two-Factor Authentication</h3>
                           <p className="text-sm text-surface-400">
-                            {profile.totp_enabled ? 'Enabled' : 'Disabled'}
+                            {(profile.has_2fa || profile.totp_enabled) ? 'Enabled' : 'Disabled'}
                           </p>
                         </div>
                       </div>
-                      <button
-                        onClick={() => router.push(`/${lang}/auth/2fa`)}
-                        className="px-4 py-2 bg-primary-500/20 text-primary-400 rounded-lg hover:bg-primary-500/30 transition-colors"
-                      >
-                        {profile.totp_enabled ? 'Manage' : 'Enable'}
-                      </button>
+                      {!(profile.has_2fa || profile.totp_enabled) && profile.auth_provider === 'local' && (
+                        <button
+                          onClick={() => router.push(`/${lang}/auth/2fa`)}
+                          className="px-4 py-2 bg-primary-500/20 text-primary-400 rounded-lg hover:bg-primary-500/30 transition-colors"
+                        >
+                          Enable
+                        </button>
+                      )}
+                      {(profile.has_2fa || profile.totp_enabled) && (
+                        <span className="px-4 py-2 bg-green-500/20 text-green-400 rounded-lg text-sm font-medium">
+                          Active
+                        </span>
+                      )}
                     </div>
+                    {(profile.has_2fa || profile.totp_enabled) && (
+                      <p className="text-xs text-surface-500 mt-2">
+                        2FA is currently enabled on your account. To reconfigure, you&apos;ll need to disable it first.
+                      </p>
+                    )}
                   </div>
 
                   {/* Password Change (only for local users) */}

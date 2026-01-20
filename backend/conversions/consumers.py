@@ -222,3 +222,126 @@ class UserJobsConsumer(AsyncWebsocketConsumer):
         
         jobs = ConversionJob.objects.filter(user=user).order_by('-created_at')[:50]
         return ConversionJobListSerializer(jobs, many=True).data
+
+
+class PendingFileProgressConsumer(AsyncWebsocketConsumer):
+    """
+    WebSocket consumer for tracking pending file analysis progress.
+    
+    Clients connect to: /ws/pending-file/{file_id}/
+    
+    Messages sent to clients:
+    {
+        "type": "pending_file_progress",
+        "progress": 45,
+        "status": "analyzing",
+        "stage": "DOWNLOADING",
+        "message": "Downloading file from storage",
+        "eta_seconds": 30,
+        "eta_breakdown": {
+            "download_eta": 25,
+            "analysis_eta": 5,
+            "total_eta": 30
+        },
+        "download_speed_mbps": 10.5
+    }
+    """
+
+    async def connect(self):
+        """Handle WebSocket connection."""
+        self.file_id = self.scope['url_route']['kwargs']['file_id']
+        self.room_group_name = f'pending_file_{self.file_id}'
+        
+        # Verify user owns this pending file
+        user = self.scope.get('user')
+        if user and user.is_authenticated:
+            owns_file = await self.user_owns_file(user, self.file_id)
+            if not owns_file:
+                await self.close(code=4003)
+                return
+        
+        # Join room group
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name
+        )
+        
+        await self.accept()
+        
+        # Send current file status
+        file_status = await self.get_file_status(self.file_id)
+        if file_status:
+            await self.send(text_data=json.dumps({
+                'type': 'status',
+                **file_status
+            }))
+
+    async def disconnect(self, close_code):
+        """Handle WebSocket disconnection."""
+        # Leave room group
+        await self.channel_layer.group_discard(
+            self.room_group_name,
+            self.channel_name
+        )
+
+    async def receive(self, text_data):
+        """
+        Handle incoming messages from WebSocket.
+        
+        Supported commands:
+        - {"action": "status"} - Request current status
+        """
+        try:
+            data = json.loads(text_data)
+            action = data.get('action')
+            
+            if action == 'status':
+                file_status = await self.get_file_status(self.file_id)
+                if file_status:
+                    await self.send(text_data=json.dumps({
+                        'type': 'status',
+                        **file_status
+                    }))
+        
+        except json.JSONDecodeError:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'Invalid JSON'
+            }))
+
+    async def pending_file_progress(self, event):
+        """
+        Handle pending file progress updates from Celery tasks.
+        
+        This method is called when a message is sent to the group.
+        """
+        await self.send(text_data=json.dumps({
+            'type': 'progress',
+            'progress': event.get('progress', 0),
+            'status': event.get('status', 'unknown'),
+            'stage': event.get('stage', ''),
+            'message': event.get('message', ''),
+            'eta_seconds': event.get('eta_seconds'),
+            'eta_breakdown': event.get('eta_breakdown', {}),
+            'download_speed_mbps': event.get('download_speed_mbps'),
+        }))
+
+    @database_sync_to_async
+    def user_owns_file(self, user, file_id):
+        """Check if user owns the pending file."""
+        from .models import PendingFile
+        return PendingFile.objects.filter(id=file_id, user=user).exists()
+
+    @database_sync_to_async
+    def get_file_status(self, file_id):
+        """Get current pending file status from database."""
+        from .models import PendingFile
+        try:
+            pending_file = PendingFile.objects.get(id=file_id)
+            return {
+                'status': pending_file.status,
+                'progress': 100 if pending_file.status == 'ready' else 0,
+                'metadata': pending_file.metadata if pending_file.status == 'ready' else None,
+            }
+        except PendingFile.DoesNotExist:
+            return None

@@ -31,6 +31,9 @@ export default function TwoFactorPage() {
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [copiedCodes, setCopiedCodes] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [isChecking2FA, setIsChecking2FA] = useState(true);
+  const [has2FAEnabled, setHas2FAEnabled] = useState(false);
+  const [showReconfigureConfirm, setShowReconfigureConfirm] = useState(false);
 
   // Check authentication - support both SSO and local token
   useEffect(() => {
@@ -38,6 +41,7 @@ export default function TwoFactorPage() {
       // If auth is disabled, allow access
       if (!requireAuth) {
         setIsCheckingAuth(false);
+        setIsChecking2FA(false);
         return;
       }
 
@@ -60,9 +64,72 @@ export default function TwoFactorPage() {
     checkAuth();
   }, [sessionStatus, session, localUser, localUserLoading, requireAuth, router, lang]);
 
+  // Check if 2FA is already enabled
+  useEffect(() => {
+    if (isCheckingAuth || requireAuth === false) {
+      setIsChecking2FA(false);
+      return;
+    }
+
+    const check2FAStatus = async () => {
+      try {
+        const response = await api.get('/api/auth/me/');
+        const userData = response.data;
+        // UserSerializer returns has_2fa, not totp_enabled directly
+        // Check both fields to be safe
+        const is2FAEnabled = Boolean(userData.has_2fa) || Boolean(userData.totp_enabled);
+        setHas2FAEnabled(is2FAEnabled);
+        
+        if (is2FAEnabled) {
+          setShowReconfigureConfirm(true);
+        }
+      } catch (err) {
+        console.error('Failed to check 2FA status:', err);
+        // If we can't check, assume not enabled and allow setup
+        // The backend will catch it if 2FA is actually enabled
+        setHas2FAEnabled(false);
+      } finally {
+        setIsChecking2FA(false);
+      }
+    };
+
+    check2FAStatus();
+  }, [isCheckingAuth, requireAuth]);
+
+  const handleReconfigureConfirm = async () => {
+    // First, we need to disable 2FA before reconfiguring
+    // But the backend requires a password to disable, so we'll redirect to profile
+    // where user can disable it first, or we can try to disable it here
+    // For now, let's redirect to profile with a message
+    router.push(`/${lang}/profile?tab=security`);
+  };
+
+  const handleReconfigureCancel = () => {
+    router.push(`/${lang}/profile`);
+  };
+
   const handleSetup = async () => {
     setIsLoading(true);
     setError('');
+
+    // Double-check 2FA status before attempting setup
+    try {
+      const checkResponse = await api.get('/api/auth/me/');
+      const userData = checkResponse.data;
+      const is2FAEnabled = Boolean(userData.has_2fa) || Boolean(userData.totp_enabled);
+      
+      if (is2FAEnabled) {
+        setError('2FA is already enabled. Please go to your profile to manage it.');
+        setTimeout(() => {
+          router.push(`/${lang}/profile?tab=security`);
+        }, 2000);
+        setIsLoading(false);
+        return;
+      }
+    } catch (checkErr) {
+      // If we can't check, proceed anyway - backend will catch it
+      console.warn('Could not verify 2FA status before setup:', checkErr);
+    }
 
     try {
       const response = await api.post('/api/auth/2fa/setup/');
@@ -70,7 +137,15 @@ export default function TwoFactorPage() {
       setSecret(response.data.secret);
       setStep('verify');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to setup 2FA');
+      const errorMessage = err.response?.data?.detail || 'Failed to setup 2FA';
+      setError(errorMessage);
+      
+      // If 2FA is already enabled, redirect to profile
+      if (errorMessage.includes('already enabled') || errorMessage.includes('2FA is already')) {
+        setTimeout(() => {
+          router.push(`/${lang}/profile?tab=security`);
+        }, 2000);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -105,10 +180,62 @@ export default function TwoFactorPage() {
     router.push(`/${lang}`);
   };
 
-  if (isCheckingAuth || sessionStatus === 'loading' || localUserLoading) {
+  if (isCheckingAuth || isChecking2FA || sessionStatus === 'loading' || localUserLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-surface-950">
         <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+      </div>
+    );
+  }
+
+  // Show confirmation dialog if 2FA is already enabled
+  if (showReconfigureConfirm && has2FAEnabled) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-surface-950">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md"
+        >
+          <div className="glass rounded-2xl p-8">
+            <div className="text-center mb-8">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                <AlertCircle className="w-8 h-8 text-yellow-400" />
+              </div>
+              <h1 className="text-2xl font-bold text-white">Two-Factor Authentication Already Enabled</h1>
+              <p className="text-surface-400 mt-2">
+                You already have 2FA enabled on your account. Reconfiguring will disable your current 2FA setup and require you to set it up again.
+              </p>
+            </div>
+
+            <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 mb-6">
+              <div className="flex items-start gap-2 text-yellow-400 text-sm">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium">Warning</p>
+                  <p className="text-yellow-400/80">
+                    If you proceed, you will need to scan a new QR code with your authenticator app. Make sure you have access to your authenticator app or backup codes before continuing.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleReconfigureCancel}
+                className="flex-1 py-3 bg-surface-700 hover:bg-surface-600 text-white font-medium rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReconfigureConfirm}
+                className="flex-1 py-3 bg-gradient-to-r from-primary-500 to-accent-500 text-white font-medium rounded-xl hover:opacity-90 transition-opacity"
+              >
+                Reconfigure 2FA
+              </button>
+            </div>
+          </div>
+        </motion.div>
       </div>
     );
   }

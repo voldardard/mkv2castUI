@@ -15,4 +15,9 @@ websocket_urlpatterns = [
         r'ws/jobs/$',
         consumers.UserJobsConsumer.as_asgi()
     ),
+    # Pending file analysis progress tracking
+    re_path(
+        r'ws/pending-file/(?P<file_id>[0-9a-f-]+)/$',
+        consumers.PendingFileProgressConsumer.as_asgi()
+    ),
 ]

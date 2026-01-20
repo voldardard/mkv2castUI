@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { X, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { getFileMetadata, confirmUploadComplete } from '@/lib/api';
+import { useWebSocket } from '@/hooks';
 
 interface PendingFileData {
   file: File;
@@ -39,6 +40,55 @@ interface PendingFileItemProps {
 
 export function PendingFileItem({ pendingFile, lang, onRemove, onReady }: PendingFileItemProps) {
   const [isPolling, setIsPolling] = useState(false);
+  const [analysisState, setAnalysisState] = useState<{
+    progress?: number;
+    stage?: string;
+    message?: string;
+    etaSeconds?: number;
+    etaBreakdown?: { download_eta?: number; analysis_eta?: number; total_eta?: number };
+    downloadSpeedMbps?: number;
+  }>({});
+
+  // WebSocket for real-time analysis updates
+  useWebSocket(
+    `/ws/pending-file/${pendingFile.fileId}/`,
+    {
+      onMessage: (data) => {
+        if (data.type === 'progress' || data.type === 'pending_file_progress') {
+          setAnalysisState({
+            progress: data.progress,
+            stage: data.stage,
+            message: data.message,
+            etaSeconds: data.eta_seconds,
+            etaBreakdown: data.eta_breakdown,
+            downloadSpeedMbps: data.download_speed_mbps,
+          });
+          
+          // If status changed to ready, trigger onReady
+          if (data.status === 'ready' && pendingFile.status !== 'ready') {
+            // Fetch full metadata
+            getFileMetadata(lang, pendingFile.fileId).then((result) => {
+              if (result.status === 'ready' && result.metadata) {
+                onReady(pendingFile.fileId, result.metadata);
+              }
+            });
+          }
+        } else if (data.type === 'status') {
+          // Initial status from WebSocket
+          if (data.status === 'ready' && data.metadata) {
+            onReady(pendingFile.fileId, data.metadata);
+          }
+        }
+      },
+      onError: (error) => {
+        console.warn('WebSocket error for pending file:', error);
+        // Fallback to polling if WebSocket fails
+        if (pendingFile.status === 'analyzing' && !isPolling) {
+          pollMetadata();
+        }
+      },
+    }
+  );
 
   const handleUploadComplete = useCallback(async () => {
     try {
@@ -106,6 +156,21 @@ export function PendingFileItem({ pendingFile, lang, onRemove, onReady }: Pendin
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const formatETA = (seconds?: number) => {
+    if (!seconds || seconds < 0) return null;
+    if (seconds < 60) {
+      return `${Math.round(seconds)}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    if (minutes < 60) {
+      return `${minutes}m ${secs}s`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}h ${mins}m`;
+  };
+
   return (
     <div className="border border-surface-700 rounded-xl p-4 bg-surface-900/50">
       <div className="flex items-start justify-between mb-3">
@@ -141,9 +206,49 @@ export function PendingFileItem({ pendingFile, lang, onRemove, onReady }: Pendin
       )}
 
       {pendingFile.status === 'analyzing' && (
-        <div className="flex items-center gap-2 text-sm text-surface-400">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span>Analyzing file...</span>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm text-surface-400">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>
+              {analysisState.message || analysisState.stage === 'STREAM_ANALYZING' 
+                ? 'Analyzing file directly from storage (streaming)...'
+                : analysisState.stage === 'DOWNLOADING'
+                ? 'Downloading file from storage...'
+                : analysisState.stage === 'ANALYZING'
+                ? 'Analyzing file...'
+                : 'Analyzing file...'}
+            </span>
+            {analysisState.etaSeconds !== undefined && analysisState.etaSeconds > 0 && (
+              <span className="text-surface-500">
+                (ETA: {formatETA(analysisState.etaSeconds)})
+              </span>
+            )}
+          </div>
+          {analysisState.etaBreakdown && (
+            <div className="text-xs text-surface-500 pl-6">
+              {analysisState.etaBreakdown.download_eta !== undefined && analysisState.etaBreakdown.download_eta > 0 && (
+                <span>Download: {formatETA(analysisState.etaBreakdown.download_eta)}</span>
+              )}
+              {analysisState.etaBreakdown.analysis_eta !== undefined && analysisState.etaBreakdown.analysis_eta > 0 && (
+                <span className={analysisState.etaBreakdown.download_eta ? ' ml-2' : ''}>
+                  Analysis: {formatETA(analysisState.etaBreakdown.analysis_eta)}
+                </span>
+              )}
+            </div>
+          )}
+          {analysisState.downloadSpeedMbps !== undefined && analysisState.downloadSpeedMbps > 0 && (
+            <div className="text-xs text-surface-500 pl-6">
+              Speed: {analysisState.downloadSpeedMbps.toFixed(1)} MB/s
+            </div>
+          )}
+          {analysisState.progress !== undefined && analysisState.progress > 0 && analysisState.progress < 100 && (
+            <div className="w-full bg-surface-800 rounded-full h-2">
+              <div
+                className="bg-primary-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${analysisState.progress}%` }}
+              />
+            </div>
+          )}
         </div>
       )}
 

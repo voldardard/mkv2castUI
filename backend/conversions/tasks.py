@@ -27,6 +27,10 @@ try:
 except ImportError:
     MKV2CAST_AVAILABLE = False
 
+# Cache for downloaded files (file_id -> local_path)
+# This allows reusing downloaded files between analysis and conversion
+_downloaded_files_cache = {}
+
 
 def send_progress_update(
     job_id: str,
@@ -67,6 +71,106 @@ def send_progress_update(
             'fps': fps,
             'bitrate': bitrate,
         }
+    )
+
+
+def calculate_eta(file_size_bytes: int, bytes_downloaded: int = 0, elapsed_time: float = 0, 
+                  download_speed_mbps: float = None) -> dict:
+    """
+    Calculate ETA for file download and analysis.
+    
+    Args:
+        file_size_bytes: Total file size in bytes
+        bytes_downloaded: Bytes downloaded so far (0 if not started)
+        elapsed_time: Time elapsed in seconds
+        download_speed_mbps: Current download speed in Mbps (optional)
+    
+    Returns:
+        Dict with eta_seconds, eta_breakdown, download_speed_mbps
+    """
+    file_size_mb = file_size_bytes / (1024 * 1024)
+    
+    # Estimate analysis time based on file size
+    # Rough estimate: ~1-2s for small files (<100MB), ~3-5s for larger files
+    if file_size_mb < 100:
+        analysis_eta = 2
+    elif file_size_mb < 500:
+        analysis_eta = 3
+    elif file_size_mb < 1000:
+        analysis_eta = 4
+    else:
+        analysis_eta = 5
+    
+    # Calculate download ETA
+    download_eta = None
+    speed = download_speed_mbps
+    
+    if bytes_downloaded > 0 and elapsed_time > 0:
+        # Calculate speed from progress
+        speed = (bytes_downloaded / elapsed_time) / (1024 * 1024)  # Mbps
+        remaining_bytes = file_size_bytes - bytes_downloaded
+        if speed > 0:
+            download_eta = remaining_bytes / (speed * 1024 * 1024)  # seconds
+    elif download_speed_mbps and download_speed_mbps > 0:
+        # Use provided speed
+        speed = download_speed_mbps
+        download_eta = file_size_mb / speed  # seconds
+    
+    # Total ETA
+    total_eta = None
+    if download_eta is not None:
+        total_eta = download_eta + analysis_eta
+    elif analysis_eta:
+        total_eta = analysis_eta
+    
+    return {
+        'eta_seconds': int(total_eta) if total_eta else None,
+        'eta_breakdown': {
+            'download_eta': int(download_eta) if download_eta else None,
+            'analysis_eta': int(analysis_eta),
+            'total_eta': int(total_eta) if total_eta else None,
+        },
+        'download_speed_mbps': round(speed, 2) if speed else None,
+    }
+
+
+def send_pending_file_update(
+    file_id: str,
+    progress: int,
+    status: str,
+    stage: str = '',
+    message: str = '',
+    eta_info: dict = None
+):
+    """
+    Send progress update for pending file analysis via WebSocket.
+    
+    Args:
+        file_id: The pending file ID
+        progress: Progress percentage (0-100)
+        status: File status (analyzing, ready, error)
+        stage: Current processing stage (DOWNLOADING, ANALYZING, etc.)
+        message: Optional message
+        eta_info: Optional dict with eta_seconds, eta_breakdown, download_speed_mbps
+    """
+    channel_layer = get_channel_layer()
+    payload = {
+        'type': 'pending_file_progress',
+        'progress': progress,
+        'status': status,
+        'stage': stage,
+        'message': message,
+    }
+    
+    # Add ETA info if provided
+    if eta_info:
+        payload['eta_seconds'] = eta_info.get('eta_seconds')
+        payload['eta_breakdown'] = eta_info.get('eta_breakdown', {})
+        payload['download_speed_mbps'] = eta_info.get('download_speed_mbps')
+    
+    async_to_sync(channel_layer.group_send)(
+        f'pending_file_{file_id}',
+        payload
     )
 
 
@@ -251,11 +355,24 @@ def run_conversion(self, job_id: str):
             # New flow: use PendingFile
             pending_file = job.pending_file
             input_file_key = pending_file.file_key
-            input_path = temp_dir / pending_file.original_filename
             
-            # Download from S3
-            add_log(job, 'info', f'Downloading file from S3: {input_file_key}')
-            storage_service.download_file(input_file_key, str(input_path))
+            # Check if file was already downloaded during analysis
+            cached_path = _downloaded_files_cache.get(str(pending_file.id))
+            if cached_path and Path(cached_path).exists():
+                # Reuse cached file
+                input_path = Path(cached_path)
+                add_log(job, 'info', f'Reusing cached file from analysis: {input_path}')
+                send_progress_update(job_id, 5, 'analyzing', 'REUSING_CACHE')
+                add_log(job, 'info', 'Reusing downloaded file from analysis cache')
+            else:
+                # Download from S3
+                input_path = temp_dir / pending_file.original_filename
+                add_log(job, 'info', f'Downloading file from S3: {input_file_key}')
+                send_progress_update(job_id, 2, 'analyzing', 'DOWNLOADING')
+                add_log(job, 'info', 'Downloading file from storage')
+                storage_service.download_file(input_file_key, str(input_path))
+                # Cache it for potential reuse
+                _downloaded_files_cache[str(pending_file.id)] = str(input_path)
         elif job.original_file:
             # Legacy flow: check if local file exists
             try:
@@ -335,10 +452,14 @@ def run_conversion(self, job_id: str):
                 output_path = Path(output_path)
                 output_size = output_path.stat().st_size
                 
-                # Upload to S3/MinIO
+                # Upload to S3/MinIO with progress tracking
                 output_file_key = f'finished/{job.id}/{output_path.name}'
                 add_log(job, 'info', f'Uploading result to S3: {output_file_key}')
+                send_progress_update(job_id, 95, 'processing', 'UPLOADING')
+                add_log(job, 'info', 'Uploading converted file to storage')
                 storage_service.upload_file(str(output_path), output_file_key)
+                send_progress_update(job_id, 98, 'processing', 'FINALIZING')
+                add_log(job, 'info', 'Finalizing upload')
                 
                 # Set the output file key (S3 path)
                 job.output_file.name = output_file_key
@@ -347,6 +468,15 @@ def run_conversion(self, job_id: str):
                 job.progress = 100
                 job.completed_at = timezone.now()
                 job.save()
+                
+                # Clean up cached file if it was used
+                if job.pending_file:
+                    cached_path = _downloaded_files_cache.pop(str(job.pending_file.id), None)
+                    if cached_path and Path(cached_path).exists():
+                        try:
+                            Path(cached_path).unlink()
+                        except Exception:
+                            pass
                 
                 # Update user storage
                 job.user.storage_used += output_size
@@ -495,7 +625,16 @@ def analyze_pending_file(self, file_id: str):
     - Video codec
     - Duration
     - Resolution
+    
+    Tries to analyze directly from S3 using signed URL (streaming) first,
+    falls back to downloading if that fails.
     """
+    import time
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    total_start_time = time.time()
+    
     try:
         pending_file = PendingFile.objects.get(id=file_id)
     except PendingFile.DoesNotExist:
@@ -505,15 +644,88 @@ def analyze_pending_file(self, file_id: str):
         return
     
     storage_service = get_storage_service()
-    temp_dir = Path(tempfile.mkdtemp())
-    local_file_path = temp_dir / pending_file.original_filename
+    file_size_mb = pending_file.file_size / (1024 * 1024)
+    local_file_path = None
+    used_stream_analysis = False
     
     try:
-        # Download file from S3 to temp directory
-        storage_service.download_file(pending_file.file_key, str(local_file_path))
+        # Try streaming analysis first (no download needed)
+        url_gen_start = time.time()
+        signed_url = storage_service.generate_presigned_get_url(
+            pending_file.file_key,
+            expiry=3600  # 1 hour should be enough
+        )
+        url_gen_time = time.time() - url_gen_start
         
-        # Use ffprobe to extract metadata
+        logger.info(f'[PERF] Generated signed URL in {url_gen_time:.2f}s for {pending_file.original_filename}')
+        
+        # Send progress update: attempting stream analysis
+        send_pending_file_update(
+            str(file_id), 5, 'analyzing', 'STREAM_ANALYZING',
+            'Analyzing file directly from storage (streaming)',
+            calculate_eta(pending_file.file_size, 0, 0)
+        )
+        
+        # Try ffprobe on signed URL (streaming)
+        stream_analysis_start = time.time()
         try:
+            result = subprocess.run(
+                [
+                    'ffprobe',
+                    '-v', 'quiet',
+                    '-print_format', 'json',
+                    '-show_format',
+                    '-show_streams',
+                    signed_url
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=120  # 2 minutes max for stream analysis
+            )
+            
+            stream_analysis_time = time.time() - stream_analysis_start
+            used_stream_analysis = True
+            logger.info(f'[PERF] Stream analysis completed in {stream_analysis_time:.2f}s for {pending_file.original_filename}')
+            add_log(None, 'debug', f'Stream analysis successful: {stream_analysis_time:.2f}s (no download needed)')
+            
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, Exception) as e:
+            # Stream analysis failed, fallback to download
+            stream_analysis_time = time.time() - stream_analysis_start
+            logger.warning(f'[PERF] Stream analysis failed after {stream_analysis_time:.2f}s, falling back to download: {e}')
+            add_log(None, 'debug', f'Stream analysis failed, using download fallback: {e}')
+            
+            # Fallback: download file
+            temp_dir = Path(tempfile.mkdtemp())
+            local_file_path = temp_dir / pending_file.original_filename
+            
+            download_start = time.time()
+            send_pending_file_update(
+                str(file_id), 10, 'analyzing', 'DOWNLOADING',
+                'Downloading file from storage',
+                calculate_eta(pending_file.file_size, 0, 0)
+            )
+            
+            storage_service.download_file(pending_file.file_key, str(local_file_path))
+            
+            download_time = time.time() - download_start
+            download_speed = file_size_mb / download_time if download_time > 0 else 0
+            
+            logger.info(f'[PERF] Downloaded {file_size_mb:.1f} MB in {download_time:.2f}s ({download_speed:.2f} MB/s)')
+            add_log(None, 'debug', f'Downloaded file: {download_time:.2f}s, {download_speed:.2f} MB/s')
+            
+            # Cache the downloaded file path for reuse in conversion
+            _downloaded_files_cache[str(file_id)] = str(local_file_path)
+            
+            # Send progress update: analyzing downloaded file
+            send_pending_file_update(
+                str(file_id), 30, 'analyzing', 'ANALYZING',
+                f'Analyzing file ({file_size_mb:.1f} MB downloaded in {download_time:.1f}s)',
+                calculate_eta(pending_file.file_size, pending_file.file_size, download_time, download_speed)
+            )
+            
+            # Use ffprobe on local file
+            analysis_start = time.time()
             result = subprocess.run(
                 [
                     'ffprobe',
@@ -528,101 +740,126 @@ def analyze_pending_file(self, file_id: str):
                 check=True,
                 timeout=300  # 5 minutes max
             )
+            analysis_time = time.time() - analysis_start
+            logger.info(f'[PERF] Local analysis completed in {analysis_time:.2f}s')
+            add_log(None, 'debug', f'Local file analysis: {analysis_time:.2f}s')
+        
+        # Process ffprobe output (same for both stream and download)
+        processing_start = time.time()
+        probe_data = json.loads(result.stdout)
+        
+        # Extract metadata
+        metadata = {
+            'audio_tracks': [],
+            'subtitle_tracks': [],
+            'video_codec': None,
+            'duration': None,
+            'width': None,
+            'height': None,
+        }
+        
+        # Process streams
+        for i, stream in enumerate(probe_data.get('streams', [])):
+            codec_type = stream.get('codec_type', '')
             
-            probe_data = json.loads(result.stdout)
+            if codec_type == 'audio':
+                # Extract audio track info
+                track_info = {
+                    'index': i,
+                    'stream_index': stream.get('index', i),
+                    'codec': stream.get('codec_name', ''),
+                    'codec_long': stream.get('codec_long_name', ''),
+                    'language': stream.get('tags', {}).get('language', 'unknown'),
+                    'channels': stream.get('channels', 0),
+                    'sample_rate': stream.get('sample_rate', ''),
+                    'bitrate': stream.get('bit_rate', ''),
+                    'default': stream.get('disposition', {}).get('default', 0) == 1,
+                    'forced': stream.get('disposition', {}).get('forced', 0) == 1,
+                }
+                metadata['audio_tracks'].append(track_info)
             
-            # Extract metadata
-            metadata = {
-                'audio_tracks': [],
-                'subtitle_tracks': [],
-                'video_codec': None,
-                'duration': None,
-                'width': None,
-                'height': None,
-            }
+            elif codec_type == 'subtitle':
+                # Extract subtitle track info
+                track_info = {
+                    'index': i,
+                    'stream_index': stream.get('index', i),
+                    'codec': stream.get('codec_name', ''),
+                    'codec_long': stream.get('codec_long_name', ''),
+                    'language': stream.get('tags', {}).get('language', 'unknown'),
+                    'forced': stream.get('disposition', {}).get('forced', 0) == 1,
+                    'default': stream.get('disposition', {}).get('default', 0) == 1,
+                }
+                metadata['subtitle_tracks'].append(track_info)
             
-            # Process streams
-            for i, stream in enumerate(probe_data.get('streams', [])):
-                codec_type = stream.get('codec_type', '')
-                
-                if codec_type == 'audio':
-                    # Extract audio track info
-                    track_info = {
-                        'index': i,
-                        'stream_index': stream.get('index', i),
-                        'codec': stream.get('codec_name', ''),
-                        'codec_long': stream.get('codec_long_name', ''),
-                        'language': stream.get('tags', {}).get('language', 'unknown'),
-                        'channels': stream.get('channels', 0),
-                        'sample_rate': stream.get('sample_rate', ''),
-                        'bitrate': stream.get('bit_rate', ''),
-                        'default': stream.get('disposition', {}).get('default', 0) == 1,
-                        'forced': stream.get('disposition', {}).get('forced', 0) == 1,
-                    }
-                    metadata['audio_tracks'].append(track_info)
-                
-                elif codec_type == 'subtitle':
-                    # Extract subtitle track info
-                    track_info = {
-                        'index': i,
-                        'stream_index': stream.get('index', i),
-                        'codec': stream.get('codec_name', ''),
-                        'codec_long': stream.get('codec_long_name', ''),
-                        'language': stream.get('tags', {}).get('language', 'unknown'),
-                        'forced': stream.get('disposition', {}).get('forced', 0) == 1,
-                        'default': stream.get('disposition', {}).get('default', 0) == 1,
-                    }
-                    metadata['subtitle_tracks'].append(track_info)
-                
-                elif codec_type == 'video':
-                    # Extract video info
-                    if metadata['video_codec'] is None:
-                        metadata['video_codec'] = stream.get('codec_name', '')
-                        metadata['width'] = stream.get('width')
-                        metadata['height'] = stream.get('height')
-            
-            # Extract duration from format
-            format_info = probe_data.get('format', {})
-            duration_str = format_info.get('duration')
-            if duration_str:
-                try:
-                    metadata['duration'] = float(duration_str)
-                except (ValueError, TypeError):
-                    pass
-            
-            # Save metadata to PendingFile
-            pending_file.metadata = metadata
-            pending_file.status = 'ready'
-            pending_file.save(update_fields=['metadata', 'status'])
-            
-            add_log(None, 'info', f'File analysis completed for {pending_file.original_filename}')
-            
-        except subprocess.TimeoutExpired:
-            pending_file.status = 'expired'
-            pending_file.save(update_fields=['status'])
-            add_log(None, 'error', f'File analysis timeout for {pending_file.original_filename}')
-        except subprocess.CalledProcessError as e:
-            pending_file.status = 'expired'
-            pending_file.save(update_fields=['status'])
-            add_log(None, 'error', f'File analysis failed for {pending_file.original_filename}: {e}')
-        except json.JSONDecodeError as e:
-            pending_file.status = 'expired'
-            pending_file.save(update_fields=['status'])
-            add_log(None, 'error', f'Failed to parse ffprobe output for {pending_file.original_filename}: {e}')
-        except Exception as e:
-            pending_file.status = 'expired'
-            pending_file.save(update_fields=['status'])
-            add_log(None, 'error', f'Unexpected error during file analysis for {pending_file.original_filename}: {e}')
+            elif codec_type == 'video':
+                # Extract video info
+                if metadata['video_codec'] is None:
+                    metadata['video_codec'] = stream.get('codec_name', '')
+                    metadata['width'] = stream.get('width')
+                    metadata['height'] = stream.get('height')
+        
+        # Extract duration from format
+        format_info = probe_data.get('format', {})
+        duration_str = format_info.get('duration')
+        if duration_str:
+            try:
+                metadata['duration'] = float(duration_str)
+            except (ValueError, TypeError):
+                pass
+        
+        processing_time = time.time() - processing_start
+        total_time = time.time() - total_start_time
+        
+        logger.info(f'[PERF] Metadata processing: {processing_time:.2f}s')
+        logger.info(f'[PERF] Total analysis time: {total_time:.2f}s (stream: {used_stream_analysis})')
+        add_log(None, 'debug', f'Metadata processing: {processing_time:.2f}s, Total: {total_time:.2f}s')
+        
+        # Save metadata to PendingFile
+        pending_file.metadata = metadata
+        pending_file.status = 'ready'
+        pending_file.save(update_fields=['metadata', 'status'])
+        
+        # Send final progress update
+        send_pending_file_update(
+            str(file_id), 100, 'ready', 'READY',
+            f'Analysis complete ({total_time:.1f}s total)',
+            {'eta_seconds': 0, 'eta_breakdown': {'total_eta': 0}}
+        )
+        
+        add_log(None, 'info', f'File analysis completed for {pending_file.original_filename} in {total_time:.2f}s')
+        
+    except subprocess.TimeoutExpired:
+        pending_file.status = 'expired'
+        pending_file.save(update_fields=['status'])
+        add_log(None, 'error', f'File analysis timeout for {pending_file.original_filename}')
+        send_pending_file_update(str(file_id), 0, 'error', 'ERROR', 'Analysis timeout')
+    except subprocess.CalledProcessError as e:
+        pending_file.status = 'expired'
+        pending_file.save(update_fields=['status'])
+        add_log(None, 'error', f'File analysis failed for {pending_file.original_filename}: {e}')
+        send_pending_file_update(str(file_id), 0, 'error', 'ERROR', f'Analysis failed: {e}')
+    except json.JSONDecodeError as e:
+        pending_file.status = 'expired'
+        pending_file.save(update_fields=['status'])
+        add_log(None, 'error', f'Failed to parse ffprobe output for {pending_file.original_filename}: {e}')
+        send_pending_file_update(str(file_id), 0, 'error', 'ERROR', f'Failed to parse analysis results: {e}')
+    except Exception as e:
+        pending_file.status = 'expired'
+        pending_file.save(update_fields=['status'])
+        add_log(None, 'error', f'Unexpected error during file analysis for {pending_file.original_filename}: {e}')
+        send_pending_file_update(str(file_id), 0, 'error', 'ERROR', f'Analysis failed: {e}')
         
     except Exception as e:
         pending_file.status = 'expired'
         pending_file.save(update_fields=['status'])
         add_log(None, 'error', f'Failed to download file for analysis: {e}')
     finally:
-        # Cleanup temp file
-        try:
-            if local_file_path.exists():
-                local_file_path.unlink()
-            temp_dir.rmdir()
-        except Exception:
-            pass
+        # Cleanup temp file if downloaded (not needed if stream analysis succeeded)
+        if local_file_path and Path(local_file_path).exists():
+            try:
+                Path(local_file_path).unlink()
+                temp_dir = Path(local_file_path).parent
+                if temp_dir.exists():
+                    temp_dir.rmdir()
+            except Exception:
+                pass

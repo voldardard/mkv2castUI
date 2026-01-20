@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import { useTranslations } from '@/lib/i18n';
 import { useRequireAuth, useCurrentUser } from '@/hooks/useAuthConfig';
+import { api } from '@/lib/api';
 import { 
   Menu, 
   X, 
@@ -49,6 +50,7 @@ export function Header({ lang }: HeaderProps) {
   const [langMenuOpen, setLangMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [docsMenuOpen, setDocsMenuOpen] = useState(false);
+  const [userProfile, setUserProfile] = useState<{ auth_provider?: string; has_2fa?: boolean; totp_enabled?: boolean } | null>(null);
 
   const currentLang = languages.find((l) => l.code === lang) || languages[0];
   
@@ -57,6 +59,32 @@ export function Header({ lang }: HeaderProps) {
   const user = localUser || config?.user || session?.user;
   const isAuthenticated = isLocalMode || !!session || !!localUser;
   const isAdmin = localUser?.is_admin || config?.user?.is_admin || false;
+
+  // Fetch user profile to check auth_provider and 2FA status
+  useEffect(() => {
+    if (!isAuthenticated || isLocalMode) {
+      setUserProfile(null);
+      return;
+    }
+
+    const fetchUserProfile = async () => {
+      try {
+        const response = await api.get('/api/auth/me/');
+        setUserProfile(response.data);
+      } catch (err) {
+        // Silently fail - user might not be authenticated
+        setUserProfile(null);
+      }
+    };
+
+    fetchUserProfile();
+  }, [isAuthenticated, isLocalMode, session, localUser]);
+
+  // Check if 2FA link should be shown (local user + 2FA not enabled)
+  const shouldShow2FALink = userProfile && 
+    userProfile.auth_provider === 'local' && 
+    !userProfile.has_2fa && 
+    !userProfile.totp_enabled;
 
   // Helper to check if a route is active
   const isActiveRoute = (path: string) => {
@@ -345,14 +373,16 @@ export function Header({ lang }: HeaderProps) {
                         Profile
                       </Link>
                       
-                      <Link
-                        href={`/${lang}/auth/2fa`}
-                        onClick={() => setUserMenuOpen(false)}
-                        className="flex items-center gap-3 px-4 py-2 text-surface-300 hover:bg-surface-800 transition-colors"
-                      >
-                        <Key className="w-4 h-4" />
-                        Two-Factor Auth
-                      </Link>
+                      {shouldShow2FALink && (
+                        <Link
+                          href={`/${lang}/auth/2fa`}
+                          onClick={() => setUserMenuOpen(false)}
+                          className="flex items-center gap-3 px-4 py-2 text-surface-300 hover:bg-surface-800 transition-colors"
+                        >
+                          <Key className="w-4 h-4" />
+                          Two-Factor Auth
+                        </Link>
+                      )}
                       
                       <div className="border-t border-surface-700 my-1" />
                       
