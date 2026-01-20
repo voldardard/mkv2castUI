@@ -3,6 +3,7 @@ Tests for accounts models.
 """
 import pytest
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 
 from accounts.models import User
 
@@ -89,3 +90,40 @@ class TestUserModel:
         assert user.default_container == 'mkv'
         assert user.default_hw_backend == 'vaapi'
         assert user.default_quality_preset == 'slow'
+    
+    def test_user_avatar_optional(self, user):
+        """Test that avatar field is optional."""
+        assert not user.avatar or not user.avatar.name
+        user.save()
+        user.refresh_from_db()
+        assert not user.avatar or not user.avatar.name
+    
+    def test_user_avatar_upload(self, user, temp_media_dir):
+        """Test uploading an avatar for a user."""
+        # Create a simple image file
+        image_content = b'\x89PNG\r\n\x1a\n' + b'\x00' * 100  # Minimal PNG header
+        avatar_file = SimpleUploadedFile(
+            'avatar.png',
+            image_content,
+            content_type='image/png'
+        )
+        user.avatar = avatar_file
+        user.save()
+        user.refresh_from_db()
+        assert user.avatar is not None
+        assert 'avatar' in str(user.avatar) or 'avatars' in str(user.avatar)
+    
+    def test_user_avatar_path_generation(self, user, temp_media_dir):
+        """Test that avatar path is generated correctly."""
+        image_content = b'\x89PNG\r\n\x1a\n' + b'\x00' * 100
+        avatar_file = SimpleUploadedFile(
+            'test_avatar.png',
+            image_content,
+            content_type='image/png'
+        )
+        user.avatar = avatar_file
+        user.save()
+        # Check that the path contains user ID and timestamp
+        avatar_path = str(user.avatar)
+        assert 'avatars' in avatar_path
+        assert str(user.id) in avatar_path

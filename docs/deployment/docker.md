@@ -1,6 +1,6 @@
 # Docker Deployment
 
-This guide covers deploying mkv2castUI with Docker Compose for production use.
+This guide covers deploying mkv2castUI with Docker Compose for production use, including all build options, Docker commands, and configuration details.
 
 ## Prerequisites
 
@@ -340,11 +340,271 @@ server {
 }
 ```
 
+## Docker Compose Files
+
+### docker-compose.yml (Development)
+
+Development configuration with local builds:
+
+```bash
+# Build all images from source
+docker-compose build
+
+# Build specific service
+docker-compose build backend
+docker-compose build frontend
+docker-compose build nginx
+
+# Build without cache
+docker-compose build --no-cache
+
+# Build with specific build args
+docker-compose build --build-arg NODE_ENV=production frontend
+```
+
+**Services:**
+- All services built from local Dockerfiles
+- Hot-reload support for development
+- MinIO included for local S3-compatible storage
+- Volume mounts for development
+
+### docker-compose.prod.yml (Production)
+
+Production configuration using pre-built images from GitHub Container Registry:
+
+```bash
+# Pull latest images
+docker-compose -f docker-compose.prod.yml pull
+
+# Pull specific service
+docker-compose -f docker-compose.prod.yml pull backend
+
+# Start services
+docker-compose -f docker-compose.prod.yml up -d
+
+# View logs
+docker-compose -f docker-compose.prod.yml logs -f
+```
+
+**Services:**
+- Uses pre-built images from `ghcr.io/voldardard/mkv2castui-*`
+- Optimized for production
+- Automatic migrations on startup
+- No MinIO (use external S3)
+
+## Docker Build Options
+
+### Backend Dockerfile
+
+**Base Image:** `python:3.12-slim`
+
+**System Dependencies:**
+- FFmpeg (video processing)
+- PostgreSQL client libraries (`libpq-dev`)
+- VAAPI drivers (Intel/AMD GPU support)
+- Pillow dependencies (image processing)
+- Build tools (`gcc`, `git`)
+
+**Build Arguments:**
+- None (uses Python 3.12-slim base image)
+
+**Environment Variables (build-time):**
+- `PYTHONDONTWRITEBYTECODE=1`
+- `PYTHONUNBUFFERED=1`
+- `PYTHONPATH=/app`
+- `DJANGO_SETTINGS_MODULE=mkv2cast_api.settings`
+
+**Example:**
+```bash
+cd backend
+docker build -t mkv2castui-backend:latest .
+docker build --no-cache -t mkv2castui-backend:dev .
+```
+
+### Frontend Dockerfile
+
+**Multi-stage Build:**
+1. **Builder stage** (`node:20-alpine`): Installs dependencies and builds Next.js app
+2. **Runner stage** (`node:20-alpine`): Minimal production image with only built files
+
+**Build Arguments:**
+- None (uses Node 20-alpine base image)
+
+**Environment Variables (build-time):**
+- `NEXT_TELEMETRY_DISABLED=1`
+- `NODE_ENV=production` (runner stage)
+
+**Example:**
+```bash
+cd frontend
+docker build -t mkv2castui-frontend:latest .
+docker build --target builder -t mkv2castui-frontend:builder .
+```
+
+### Nginx Dockerfile
+
+**Base Image:** `nginx:alpine`
+
+**Configuration:**
+- Custom `nginx.conf` for routing
+- Static file serving
+- WebSocket proxy support
+- Large file upload support (10GB default)
+
+**Example:**
+```bash
+cd nginx
+docker build -t mkv2castui-nginx:latest .
+```
+
+## Docker Compose Commands
+
+### Service Management
+
+```bash
+# Start all services
+docker-compose up -d
+# or using Makefile
+make up
+
+# Stop all services
+docker-compose down
+# or using Makefile
+make down
+
+# Restart specific service
+docker-compose restart backend
+
+# Stop and remove volumes
+docker-compose down -v
+
+# View service status
+docker-compose ps
+
+# View resource usage
+docker stats
+```
+
+### Logs
+
+```bash
+# All services
+docker-compose logs -f
+# or using Makefile
+make logs
+
+# Specific service
+docker-compose logs -f backend
+docker-compose logs -f celery
+docker-compose logs -f frontend
+
+# Last 100 lines
+docker-compose logs --tail=100 backend
+
+# Since timestamp
+docker-compose logs --since 2024-01-01T00:00:00 backend
+```
+
+### Executing Commands
+
+```bash
+# Django management commands
+docker-compose exec backend python manage.py migrate
+docker-compose exec backend python manage.py createsuperuser
+docker-compose exec backend python manage.py createadminuser \
+  --username admin --email admin@example.com --password 'pass'
+
+# Shell access
+docker-compose exec backend bash
+docker-compose exec frontend sh
+docker-compose exec postgres psql -U mkv2cast
+
+# Check VAAPI
+docker-compose exec celery vainfo
+
+# Check Redis
+docker-compose exec redis redis-cli ping
+```
+
+### Scaling Services
+
+```bash
+# Scale Celery workers
+docker-compose up -d --scale celery=4
+
+# Scale backend (requires load balancer)
+docker-compose up -d --scale backend=3
+```
+
+### Volumes
+
+```bash
+# List volumes
+docker volume ls | grep mkv2cast
+
+# Inspect volume
+docker volume inspect mkv2castui_postgres_data
+
+# Backup volume
+docker run --rm \
+  -v mkv2castui_postgres_data:/data \
+  -v $(pwd):/backup \
+  alpine tar czf /backup/postgres_backup.tar.gz /data
+
+# Remove unused volumes
+docker volume prune
+```
+
+### Networks
+
+```bash
+# Inspect network
+docker network inspect mkv2castui_mkv2cast-network
+
+# Connect external container
+docker network connect mkv2castui_mkv2cast-network my-container
+```
+
+## Hardware Acceleration Setup
+
+### VAAPI (Intel/AMD GPU)
+
+```bash
+# Check device on host
+ls -la /dev/dri/
+
+# Device is automatically mounted in docker-compose.yml
+# Verify in container
+docker-compose exec celery vainfo
+```
+
+### NVIDIA NVENC
+
+Requires `nvidia-docker2` and runtime configuration:
+
+```yaml
+# Add to docker-compose.yml celery service
+runtime: nvidia
+environment:
+  - NVIDIA_VISIBLE_DEVICES=all
+```
+
+```bash
+# Install nvidia-docker2
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+sudo apt-get update && sudo apt-get install -y nvidia-docker2
+sudo systemctl restart docker
+```
+
 ## Deployment
 
 ```bash
 # Build production images
 docker-compose -f docker-compose.prod.yml build
+# or using Makefile
+make build-prod
 
 # Start services
 docker-compose -f docker-compose.prod.yml up -d
@@ -352,7 +612,7 @@ docker-compose -f docker-compose.prod.yml up -d
 # View logs
 docker-compose -f docker-compose.prod.yml logs -f
 
-# Run migrations
+# Run migrations (automatic on startup, but can be run manually)
 docker-compose -f docker-compose.prod.yml exec backend python manage.py migrate
 ```
 

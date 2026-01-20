@@ -62,6 +62,13 @@ interface SiteSettings {
   s3_region: string;
   s3_custom_domain: string;
   s3_configured: boolean;
+  // MinIO Local
+  minio_endpoint: string;
+  minio_access_key: string;
+  minio_secret_key: string;
+  // URL Signing
+  signed_url_expiry_seconds: number;
+  pending_file_expiry_hours: number;
 }
 
 function formatBytes(bytes: number): string {
@@ -715,6 +722,96 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
             )}
+
+            {/* Storage & URLs Configuration */}
+            <div className="space-y-4 pt-4 border-t border-surface-700">
+              <h3 className="text-white font-medium">Storage & URLs</h3>
+              
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">
+                  Signed URL Expiry (seconds)
+                </label>
+                <input
+                  type="number"
+                  value={settings.signed_url_expiry_seconds || 3600}
+                  onChange={(e) => handleChange('signed_url_expiry_seconds', parseInt(e.target.value) || 3600)}
+                  min={60}
+                  max={86400}
+                  className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                />
+                <p className="text-xs text-surface-500 mt-1">
+                  Duration for presigned URLs (default: 3600 = 1 hour, max: 86400 = 24 hours)
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">
+                  Pending File Expiry (hours)
+                </label>
+                <input
+                  type="number"
+                  value={settings.pending_file_expiry_hours || 24}
+                  onChange={(e) => handleChange('pending_file_expiry_hours', parseInt(e.target.value) || 24)}
+                  min={1}
+                  max={168}
+                  className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                />
+                <p className="text-xs text-surface-500 mt-1">
+                  Hours before unused pending files are deleted (default: 24, max: 168 = 7 days)
+                </p>
+              </div>
+            </div>
+
+            {/* MinIO Local Configuration */}
+            <div className="space-y-4 pt-4 border-t border-surface-700">
+              <h3 className="text-white font-medium">MinIO Local (Fallback)</h3>
+              <p className="text-xs text-surface-500">
+                Used when S3 storage is disabled. Defaults to local MinIO container.
+              </p>
+              
+              <div>
+                <label className="block text-sm text-surface-400 mb-1">MinIO Endpoint</label>
+                <input
+                  type="url"
+                  value={settings.minio_endpoint || 'http://minio:9000'}
+                  onChange={(e) => handleChange('minio_endpoint', e.target.value)}
+                  placeholder="http://minio:9000"
+                  className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-surface-400 mb-1">Access Key</label>
+                  <input
+                    type="text"
+                    value={settings.minio_access_key || 'minioadmin'}
+                    onChange={(e) => handleChange('minio_access_key', e.target.value)}
+                    placeholder="minioadmin"
+                    className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-surface-400 mb-1">Secret Key</label>
+                  <div className="relative">
+                    <input
+                      type={showSecrets.s3 ? 'text' : 'password'}
+                      value={settings.minio_secret_key || 'minioadmin'}
+                      onChange={(e) => handleChange('minio_secret_key', e.target.value)}
+                      placeholder="minioadmin"
+                      className="w-full px-3 py-2 pr-10 bg-surface-800 border border-surface-700 rounded-lg text-white text-sm focus:border-primary-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSecrets(s => ({ ...s, s3: !s.s3 }))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-surface-500 hover:text-white"
+                    >
+                      {showSecrets.s3 ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {settings.use_s3_storage && (
               <div className="p-3 bg-surface-800/50 rounded-lg mt-4">

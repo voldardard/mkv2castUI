@@ -101,6 +101,8 @@ STATIC_ROOT = BASE_DIR / 'static'
 
 # Media files
 MEDIA_URL = '/media/'
+# MEDIA_ROOT is only used for temporary files during conversion
+# All persistent storage is on S3/MinIO
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
@@ -203,22 +205,41 @@ ACCOUNT_ADAPTER = 'accounts.adapters.CustomAccountAdapter'
 SOCIALACCOUNT_ADAPTER = 'accounts.adapters.CustomSocialAccountAdapter'
 
 # =============================================================================
-# Storage Configuration (Local or S3)
+# Storage Configuration (Always S3/MinIO)
 # =============================================================================
-USE_S3 = os.environ.get('USE_S3', 'false').lower() in ('true', '1', 'yes')
+# Always use S3-compatible storage (MinIO local or external S3)
+# Configuration is read dynamically from SiteSettings via custom storage backend
+# Fallback to environment variables for initial setup
 
+# Default values (used if SiteSettings not configured)
+USE_S3 = os.environ.get('USE_S3', 'false').lower() in ('true', '1', 'yes')
+MINIO_ENDPOINT = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')
+MINIO_ACCESS_KEY = os.environ.get('MINIO_ACCESS_KEY', os.environ.get('MINIO_ROOT_USER', 'minioadmin'))
+MINIO_SECRET_KEY = os.environ.get('MINIO_SECRET_KEY', os.environ.get('MINIO_ROOT_PASSWORD', 'minioadmin'))
+MINIO_BUCKET_NAME = os.environ.get('MINIO_BUCKET_NAME', 'mkv2cast')
+
+# S3 settings (for external S3 like Exoscale)
 if USE_S3:
     AWS_ACCESS_KEY_ID = os.environ.get('S3_ACCESS_KEY')
     AWS_SECRET_ACCESS_KEY = os.environ.get('S3_SECRET_KEY')
     AWS_STORAGE_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'mkv2cast')
     AWS_S3_ENDPOINT_URL = os.environ.get('S3_ENDPOINT')
     AWS_S3_REGION_NAME = os.environ.get('S3_REGION', 'us-east-1')
-    AWS_DEFAULT_ACL = None
-    AWS_S3_FILE_OVERWRITE = False
-    AWS_QUERYSTRING_AUTH = True
-    AWS_QUERYSTRING_EXPIRE = 3600  # 1 hour signed URLs
-    
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+else:
+    # Default to MinIO local
+    AWS_ACCESS_KEY_ID = MINIO_ACCESS_KEY
+    AWS_SECRET_ACCESS_KEY = MINIO_SECRET_KEY
+    AWS_STORAGE_BUCKET_NAME = MINIO_BUCKET_NAME
+    AWS_S3_ENDPOINT_URL = MINIO_ENDPOINT
+    AWS_S3_REGION_NAME = 'us-east-1'  # MinIO doesn't care about region
+
+AWS_DEFAULT_ACL = None
+AWS_S3_FILE_OVERWRITE = False
+AWS_QUERYSTRING_AUTH = True
+AWS_QUERYSTRING_EXPIRE = 3600  # 1 hour signed URLs (default, can be overridden in SiteSettings)
+
+# Use custom storage backend that reads from SiteSettings dynamically
+DEFAULT_FILE_STORAGE = 'accounts.storage_backend.DynamicS3Storage'
 
 # =============================================================================
 # mkv2cast Settings

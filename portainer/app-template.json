@@ -1,0 +1,177 @@
+{
+  "type": 1,
+  "title": "mkv2castUI",
+  "description": "Modern web application for converting MKV video files to Chromecast-compatible formats with real-time progress tracking and hardware acceleration support.",
+  "name": "mkv2castui",
+  "logo": "https://raw.githubusercontent.com/voldardard/mkv2castUI/main/logo-png.png",
+  "repository": {
+    "url": "https://github.com/voldardard/mkv2castUI",
+    "stackfile": "portainer/stack.yml"
+  },
+  "env": [
+    {
+      "name": "NGINX_PORT",
+      "label": "Nginx Port",
+      "description": "Port for the web interface (default: 8080)",
+      "default": "8080",
+      "preset": true
+    },
+    {
+      "name": "REQUIRE_AUTH",
+      "label": "Require Authentication",
+      "description": "Enable OAuth authentication (true/false). Set to false for local mode.",
+      "default": "true",
+      "select": [
+        {
+          "text": "Enabled (OAuth)",
+          "value": "true",
+          "default": true
+        },
+        {
+          "text": "Disabled (Local Mode)",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "name": "DJANGO_SECRET_KEY",
+      "label": "Django Secret Key",
+      "description": "Secret key for Django (generate with: openssl rand -hex 32)",
+      "default": "",
+      "required": true
+    },
+    {
+      "name": "POSTGRES_PASSWORD",
+      "label": "PostgreSQL Password",
+      "description": "Password for PostgreSQL database",
+      "default": "",
+      "required": true
+    },
+    {
+      "name": "POSTGRES_USER",
+      "label": "PostgreSQL User",
+      "description": "Username for PostgreSQL database",
+      "default": "mkv2cast"
+    },
+    {
+      "name": "POSTGRES_DB",
+      "label": "PostgreSQL Database",
+      "description": "Database name",
+      "default": "mkv2cast"
+    },
+    {
+      "name": "DJANGO_ALLOWED_HOSTS",
+      "label": "Allowed Hosts",
+      "description": "Comma-separated list of allowed hosts (e.g., localhost,example.com)",
+      "default": "localhost"
+    },
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "label": "Google OAuth Client ID",
+      "description": "Google OAuth client ID (optional if REQUIRE_AUTH=false)",
+      "default": ""
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "label": "Google OAuth Client Secret",
+      "description": "Google OAuth client secret (optional if REQUIRE_AUTH=false)",
+      "default": ""
+    },
+    {
+      "name": "GITHUB_CLIENT_ID",
+      "label": "GitHub OAuth Client ID",
+      "description": "GitHub OAuth client ID (optional if REQUIRE_AUTH=false)",
+      "default": ""
+    },
+    {
+      "name": "GITHUB_CLIENT_SECRET",
+      "label": "GitHub OAuth Client Secret",
+      "description": "GitHub OAuth client secret (optional if REQUIRE_AUTH=false)",
+      "default": ""
+    },
+    {
+      "name": "MKV2CAST_DEFAULT_HW",
+      "label": "Hardware Acceleration",
+      "description": "Hardware acceleration backend (auto, cpu, vaapi, qsv, nvenc)",
+      "default": "auto",
+      "select": [
+        {
+          "text": "Auto-detect",
+          "value": "auto",
+          "default": true
+        },
+        {
+          "text": "CPU (Software)",
+          "value": "cpu"
+        },
+        {
+          "text": "VAAPI (Intel/AMD)",
+          "value": "vaapi"
+        },
+        {
+          "text": "Quick Sync (Intel)",
+          "value": "qsv"
+        },
+        {
+          "text": "NVENC (NVIDIA)",
+          "value": "nvenc"
+        }
+      ]
+    },
+    {
+      "name": "MKV2CAST_MAX_FILE_SIZE",
+      "label": "Max File Size (bytes)",
+      "description": "Maximum upload file size in bytes (default: 10737418240 = 10GB)",
+      "default": "10737418240"
+    },
+    {
+      "name": "USE_S3",
+      "label": "Use S3 Storage",
+      "description": "Use external S3-compatible storage instead of local volumes",
+      "default": "false",
+      "select": [
+        {
+          "text": "Local Storage (MinIO)",
+          "value": "false",
+          "default": true
+        },
+        {
+          "text": "External S3",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "name": "S3_ENDPOINT",
+      "label": "S3 Endpoint",
+      "description": "S3 endpoint URL (required if USE_S3=true)",
+      "default": ""
+    },
+    {
+      "name": "S3_ACCESS_KEY",
+      "label": "S3 Access Key",
+      "description": "S3 access key (required if USE_S3=true)",
+      "default": ""
+    },
+    {
+      "name": "S3_SECRET_KEY",
+      "label": "S3 Secret Key",
+      "description": "S3 secret key (required if USE_S3=true)",
+      "default": ""
+    },
+    {
+      "name": "S3_BUCKET_NAME",
+      "label": "S3 Bucket Name",
+      "description": "S3 bucket name (required if USE_S3=true)",
+      "default": "mkv2cast"
+    }
+  ],
+  "categories": [
+    "media",
+    "video",
+    "conversion",
+    "self-hosted"
+  ],
+  "platform": "linux",
+  "note": "mkv2castUI requires at least 4GB RAM and 20GB disk space. For hardware acceleration, ensure GPU devices are accessible to the container."
+}

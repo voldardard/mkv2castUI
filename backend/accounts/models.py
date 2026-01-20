@@ -1,6 +1,7 @@
 """
 Custom user model and profile for mkv2cast.
 """
+import os
 import secrets
 from django.contrib.auth.models import AbstractUser
 from django.db import models
@@ -78,7 +79,14 @@ class User(AbstractUser):
     # ==========================================================================
     # User Preferences
     # ==========================================================================
-    avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
+    def avatar_upload_to(instance, filename):
+        """Generate upload path for avatars."""
+        from django.utils import timezone
+        timestamp = int(timezone.now().timestamp())
+        ext = os.path.splitext(filename)[1]
+        return f'avatars/{instance.id}/{timestamp}/avatar{ext}'
+    
+    avatar = models.ImageField(upload_to=avatar_upload_to, blank=True, null=True)
     
     preferred_language = models.CharField(
         max_length=5,
@@ -322,8 +330,16 @@ class SiteSettings(models.Model):
     site_name = models.CharField(max_length=100, default='mkv2cast')
     site_tagline = models.CharField(max_length=200, default='Convert videos for Chromecast', blank=True)
     logo_url = models.URLField(blank=True)
-    logo_file = models.ImageField(upload_to='branding/', blank=True, null=True)
-    favicon_file = models.ImageField(upload_to='branding/', blank=True, null=True)
+    
+    def logo_upload_to(instance, filename):
+        """Generate upload path for logos."""
+        from django.utils import timezone
+        timestamp = int(timezone.now().timestamp())
+        ext = os.path.splitext(filename)[1]
+        return f'images/logos/{timestamp}/logo{ext}'
+    
+    logo_file = models.ImageField(upload_to=logo_upload_to, blank=True, null=True)
+    favicon_file = models.ImageField(upload_to=logo_upload_to, blank=True, null=True)
     primary_color = models.CharField(max_length=7, default='#6366f1')  # Hex color
     secondary_color = models.CharField(max_length=7, default='#8b5cf6')
     
@@ -398,6 +414,17 @@ class SiteSettings(models.Model):
     s3_bucket_name = models.CharField(max_length=255, blank=True)
     s3_region = models.CharField(max_length=50, blank=True, default='us-east-1')
     s3_custom_domain = models.URLField(blank=True, help_text='Custom domain for serving files (e.g., CDN)')
+    
+    # MinIO Local Configuration (fallback if S3 not configured)
+    minio_endpoint = models.URLField(blank=True, default='http://minio:9000', help_text='MinIO endpoint URL (default: http://minio:9000)')
+    minio_access_key = models.CharField(max_length=255, blank=True, default='minioadmin')
+    minio_secret_key = models.CharField(max_length=255, blank=True, default='minioadmin')
+    
+    # URL Signing Configuration
+    signed_url_expiry_seconds = models.IntegerField(default=3600, help_text='Presigned URL expiration time in seconds (default: 1 hour)')
+    
+    # Pending File Cleanup
+    pending_file_expiry_hours = models.IntegerField(default=24, help_text='Hours before unused pending files are deleted (default: 24)')
     
     # ==========================================================================
     # Timestamps

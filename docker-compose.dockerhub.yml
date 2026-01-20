@@ -1,0 +1,209 @@
+# ==============================================================================
+# docker-compose.dockerhub.yml - Production deployment with pre-built images from Docker Hub
+# ==============================================================================
+#
+# Usage:
+#   1. Copy .env.example to .env and configure
+#   2. docker-compose -f docker-compose.dockerhub.yml pull
+#   3. docker-compose -f docker-compose.dockerhub.yml up -d
+#
+# ==============================================================================
+
+services:
+  # ==========================================================================
+  # Nginx - Reverse Proxy (Port 8080)
+  # ==========================================================================
+  nginx:
+    image: docker.io/voldardard/mkv2castui-nginx:latest
+    container_name: mkv2cast-nginx
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    volumes:
+      - static_files:/app/static:ro
+      - media_files:/app/media:ro
+    depends_on:
+      - frontend
+      - backend
+      - daphne
+    restart: unless-stopped
+    networks:
+      - mkv2cast-network
+
+  # ==========================================================================
+  # Frontend - Next.js React
+  # ==========================================================================
+  frontend:
+    image: docker.io/voldardard/mkv2castui-frontend:latest
+    container_name: mkv2cast-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
+      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-/ws}
+      - NEXT_PUBLIC_REQUIRE_AUTH=${REQUIRE_AUTH:-true}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:8080}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+    restart: unless-stopped
+    networks:
+      - mkv2cast-network
+
+  # ==========================================================================
+  # Backend - Django REST API (Gunicorn)
+  # ==========================================================================
+  backend:
+    image: docker.io/voldardard/mkv2castui-backend:latest
+    container_name: mkv2cast-backend
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             gunicorn mkv2cast_api.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4} --timeout ${GUNICORN_TIMEOUT:-120}"
+    environment:
+      - REQUIRE_AUTH=${REQUIRE_AUTH:-true}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
+      - DJANGO_TIME_ZONE=${DJANGO_TIME_ZONE:-UTC}
+      - DJANGO_LANGUAGE_CODE=${DJANGO_LANGUAGE_CODE:-en-us}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - USE_S3=${USE_S3:-false}
+      - S3_ENDPOINT=${S3_ENDPOINT}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
+      - S3_SECRET_KEY=${S3_SECRET_KEY}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - MKV2CAST_MAX_FILE_SIZE=${MKV2CAST_MAX_FILE_SIZE:-10737418240}
+    volumes:
+      - static_files:/app/static
+      - media_files:/app/media
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    networks:
+      - mkv2cast-network
+
+  # ==========================================================================
+  # Daphne - WebSocket Server (Django Channels)
+  # ==========================================================================
+  daphne:
+    image: docker.io/voldardard/mkv2castui-backend:latest
+    container_name: mkv2cast-daphne
+    command: daphne -b 0.0.0.0 -p 8001 mkv2cast_api.asgi:application
+    environment:
+      - REQUIRE_AUTH=${REQUIRE_AUTH:-true}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+    volumes:
+      - media_files:/app/media
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    networks:
+      - mkv2cast-network
+
+  # ==========================================================================
+  # Celery - Background Task Worker
+  # ==========================================================================
+  celery:
+    image: docker.io/voldardard/mkv2castui-backend:latest
+    container_name: mkv2cast-celery
+    command: celery -A mkv2cast_api worker -l info --concurrency=${CELERY_WORKER_CONCURRENCY:-2}
+    environment:
+      - REQUIRE_AUTH=${REQUIRE_AUTH:-true}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - USE_S3=${USE_S3:-false}
+      - S3_ENDPOINT=${S3_ENDPOINT}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
+      - S3_SECRET_KEY=${S3_SECRET_KEY}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      # mkv2cast encoding settings
+      - MKV2CAST_DEFAULT_HW=${MKV2CAST_DEFAULT_HW:-auto}
+      - MKV2CAST_VAAPI_DEVICE=${MKV2CAST_VAAPI_DEVICE:-}
+      - MKV2CAST_DEFAULT_CRF=${MKV2CAST_DEFAULT_CRF:-23}
+      - MKV2CAST_DEFAULT_PRESET=${MKV2CAST_DEFAULT_PRESET:-medium}
+      - MKV2CAST_DEFAULT_VAAPI_QP=${MKV2CAST_DEFAULT_VAAPI_QP:-23}
+      - MKV2CAST_DEFAULT_QSV_QUALITY=${MKV2CAST_DEFAULT_QSV_QUALITY:-23}
+      - MKV2CAST_DEFAULT_AUDIO_BITRATE=${MKV2CAST_DEFAULT_AUDIO_BITRATE:-192k}
+      - MKV2CAST_MAX_FILE_SIZE=${MKV2CAST_MAX_FILE_SIZE:-10737418240}
+    volumes:
+      - media_files:/app/media
+    devices:
+      - /dev/dri:/dev/dri  # For VAAPI hardware acceleration
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    networks:
+      - mkv2cast-network
+
+  # ==========================================================================
+  # PostgreSQL Database
+  # ==========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: mkv2cast-postgres
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-mkv2cast}
+      - POSTGRES_USER=${POSTGRES_USER:-mkv2cast}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mkv2cast_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - mkv2cast-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mkv2cast}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================================
+  # Redis - Cache & Message Broker
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: mkv2cast-redis
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - mkv2cast-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+  redis_data:
+  static_files:
+  media_files:
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  mkv2cast-network:
+    driver: bridge

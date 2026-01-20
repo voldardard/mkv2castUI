@@ -7,16 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-beta] - 2026-01-XX
+
 ### Added
-- Documentation pages in React frontend
-- Sphinx documentation with GitHub Pages deployment
-- Multi-language support for documentation pages
-- On-Premise deployment guide
-- Features comparison page
+
+#### Documentation & Developer Experience
+- **Comprehensive README** - Complete rewrite with all Docker options, Makefile commands, and deployment guides
+- **Enhanced Docker Documentation** - Detailed guide covering all build options, Docker Compose commands, and hardware acceleration setup
+- **Makefile Improvements** - Fixed version command output, added comprehensive help system
+- **Build Documentation** - Complete reference for all Dockerfile build options and arguments
+- **Command Reference** - Full documentation of all available Makefile commands
+
+#### Docker & Build System
+- **Production Docker Compose** - Separate `docker-compose.prod.yml` for production deployments using pre-built images
+- **Multi-stage Frontend Build** - Optimized Docker build with separate builder and runner stages
+- **Hardware Acceleration Documentation** - Complete guides for VAAPI, QSV, and NVIDIA NVENC setup
+- **Volume Management** - Documentation for backup, restore, and volume operations
+- **Service Scaling** - Guides for horizontal scaling of Celery workers and backend services
+
+#### Configuration
+- **Environment Variable Reference** - Complete documentation of all configuration options
+- **Advanced Settings** - Documentation for Gunicorn workers, Celery concurrency, and encoding presets
+- **S3-Compatible Storage** - Enhanced documentation for AWS S3, MinIO, Backblaze B2 integration
+- **Hardware Backend Options** - Complete reference for all hardware acceleration modes
+
+#### Developer Tools
+- **Makefile Commands** - Comprehensive command set for development, testing, and deployment
+  - `make version` - Show current version (fixed ANSI color output)
+  - `make release` - Prepare release with version updates
+  - `make release-push` - Automated release workflow
+  - `make check` - Release readiness verification
+  - `make migrations-check` - Database migration status
+  - `make docs-build` / `make docs-serve` - Documentation building and serving
 
 ### Changed
-- Improved README with test results and badges
-- Enhanced Header component with documentation dropdown
+
+#### Documentation
+- **README Restructure** - Professional sections covering all aspects of the application
+  - Complete Docker & Build Options section
+  - Comprehensive Makefile Commands reference
+  - Enhanced Troubleshooting section
+  - Improved Architecture documentation
+  - Better Quick Start guide
+- **Docker Documentation** - Expanded with build options, commands, and hardware acceleration
+- **Configuration Guide** - More detailed with examples and best practices
+
+#### Build System
+- **Version Display** - Fixed `make version` command to properly display ANSI colors
+- **Release Process** - Improved release automation with better error checking
+
+#### Code Quality
+- **Linting & Formatting** - Enhanced Makefile targets for code quality checks
+- **Test Organization** - Better test command structure in Makefile
+
+### Fixed
+- **Makefile Version Output** - Fixed ANSI color codes not being interpreted correctly in `make version` command
+- **Documentation Links** - Improved internal documentation linking
+- **Docker Compose Examples** - Corrected production deployment examples
+
+### Improved
+- **Developer Onboarding** - Much clearer documentation for new contributors
+- **Deployment Guides** - More comprehensive production deployment instructions
+- **Troubleshooting** - Expanded troubleshooting section with common issues and solutions
+- **API Documentation** - Better organized API reference section
+
+### Technical Details
+
+#### Docker Improvements
+- Better separation between development and production configurations
+- Clearer documentation of all Docker Compose options
+- Complete reference for all volume and network operations
+- Hardware acceleration setup guides for all supported backends
+
+#### Documentation Structure
+- Professional README with table of contents
+- Comprehensive Docker deployment guide
+- Complete Makefile command reference
+- Enhanced configuration documentation
+
+---
+
+## [0.1.0-beta] - 2026-01-19
 
 ## [0.1.0-beta] - 2026-01-19
 

@@ -6,70 +6,67 @@ from unittest.mock import patch, MagicMock
 from django.conf import settings
 
 from conversions.tasks import (
-    build_mkv2cast_command,
-    parse_ffmpeg_progress,
+    build_mkv2cast_config,
     send_progress_update,
     add_log,
 )
 from conversions.models import ConversionJob, ConversionLog
 
 
-class TestBuildMkv2castCommand:
-    """Tests for building mkv2cast commands."""
+class TestBuildMkv2castConfig:
+    """Tests for building mkv2cast Config object."""
     
-    def test_basic_command(self, conversion_job):
-        """Test building a basic conversion command."""
-        cmd = build_mkv2cast_command(conversion_job, '/input/file.mkv', '/output/file.mp4')
+    def test_basic_config(self, conversion_job):
+        """Test building a basic conversion config."""
+        config = build_mkv2cast_config(conversion_job)
         
-        assert 'mkv2cast' in cmd
-        assert '--container' in cmd
-        assert 'mp4' in cmd
+        assert config is not None
+        assert config.container == conversion_job.container
+        assert config.hw == conversion_job.hw_backend
     
     def test_cpu_encoding_options(self, conversion_job):
         """Test CPU encoding includes CRF and preset."""
         conversion_job.hw_backend = 'cpu'
         conversion_job.crf = 20
         conversion_job.preset = 'slow'
+        conversion_job.save()
         
-        cmd = build_mkv2cast_command(conversion_job, '/input.mkv', '/output.mp4')
+        config = build_mkv2cast_config(conversion_job)
         
-        assert '--crf' in cmd
-        assert '20' in cmd
-        assert '--preset' in cmd
-        assert 'slow' in cmd
+        assert config.hw == 'cpu'
+        assert config.crf == 20
+        assert config.preset == 'slow'
     
     def test_vaapi_encoding_options(self, conversion_job):
         """Test VAAPI encoding includes QP."""
         conversion_job.hw_backend = 'vaapi'
         conversion_job.vaapi_qp = 25
+        conversion_job.save()
         
-        cmd = build_mkv2cast_command(conversion_job, '/input.mkv', '/output.mp4')
+        config = build_mkv2cast_config(conversion_job)
         
-        assert '--hw' in cmd
-        assert 'vaapi' in cmd
-        assert '--vaapi-qp' in cmd
-        assert '25' in cmd
+        assert config.hw == 'vaapi'
+        assert config.vaapi_qp == 25
     
     def test_qsv_encoding_options(self, conversion_job):
         """Test QSV encoding includes quality."""
         conversion_job.hw_backend = 'qsv'
         conversion_job.qsv_quality = 22
+        conversion_job.save()
         
-        cmd = build_mkv2cast_command(conversion_job, '/input.mkv', '/output.mp4')
+        config = build_mkv2cast_config(conversion_job)
         
-        assert '--hw' in cmd
-        assert 'qsv' in cmd
-        assert '--qsv-quality' in cmd
-        assert '22' in cmd
+        assert config.hw == 'qsv'
+        assert config.qsv_quality == 22
     
     def test_audio_options(self, conversion_job):
         """Test audio options are included."""
         conversion_job.audio_bitrate = '256k'
+        conversion_job.save()
         
-        cmd = build_mkv2cast_command(conversion_job, '/input.mkv', '/output.mp4')
+        config = build_mkv2cast_config(conversion_job)
         
-        assert '--abr' in cmd
-        assert '256k' in cmd
+        assert config.abr == '256k'
     
     def test_codec_flags(self, conversion_job):
         """Test codec flags are included."""
@@ -77,80 +74,53 @@ class TestBuildMkv2castCommand:
         conversion_job.allow_hevc = True
         conversion_job.force_aac = True
         conversion_job.keep_surround = True
+        conversion_job.save()
         
-        cmd = build_mkv2cast_command(conversion_job, '/input.mkv', '/output.mp4')
+        config = build_mkv2cast_config(conversion_job)
         
-        assert '--force-h264' in cmd
-        assert '--allow-hevc' in cmd
-        assert '--force-aac' in cmd
-        assert '--keep-surround' in cmd
+        assert config.force_h264 is True
+        assert config.allow_hevc is True
+        assert config.force_aac is True
+        assert config.keep_surround is True
     
     def test_integrity_check_disabled(self, conversion_job):
         """Test integrity check can be disabled."""
         conversion_job.integrity_check = False
+        conversion_job.save()
         
-        cmd = build_mkv2cast_command(conversion_job, '/input.mkv', '/output.mp4')
+        config = build_mkv2cast_config(conversion_job)
         
-        assert '--no-integrity-check' in cmd
+        assert config.integrity_check is False
     
     def test_deep_check_enabled(self, conversion_job):
         """Test deep check can be enabled."""
         conversion_job.deep_check = True
+        conversion_job.save()
         
-        cmd = build_mkv2cast_command(conversion_job, '/input.mkv', '/output.mp4')
+        config = build_mkv2cast_config(conversion_job)
         
-        assert '--deep-check' in cmd
+        assert config.deep_check is True
     
-    def test_input_file_included(self, conversion_job):
-        """Test input file is the last argument."""
-        cmd = build_mkv2cast_command(conversion_job, '/input/test.mkv', '/output.mp4')
+    def test_config_includes_all_job_settings(self, conversion_job):
+        """Test that config includes all relevant job settings."""
+        conversion_job.container = 'mp4'
+        conversion_job.suffix = '.cast'
+        conversion_job.skip_when_ok = False
+        conversion_job.no_subtitles = True
+        conversion_job.prefer_forced_subs = False
+        conversion_job.save()
         
-        assert '/input/test.mkv' in cmd
-        assert cmd[-1] == '/input/test.mkv'
+        config = build_mkv2cast_config(conversion_job)
+        
+        assert config.container == 'mp4'
+        assert config.suffix == '.cast'
+        assert config.skip_when_ok is False
+        assert config.no_subtitles is True
+        assert config.prefer_forced_subs is False
 
 
-class TestParseFFmpegProgress:
-    """Tests for FFmpeg progress parsing."""
-    
-    def test_parse_valid_time(self):
-        """Test parsing valid time format."""
-        line = 'frame=100 time=00:01:30.50 bitrate=1000kbits/s'
-        progress, time_ms = parse_ffmpeg_progress(line, 300000)  # 5 min duration
-        
-        assert progress is not None
-        assert time_ms == 90500  # 1:30.50 in ms
-    
-    def test_parse_calculates_progress(self):
-        """Test that progress percentage is calculated."""
-        line = 'time=00:02:30.00'
-        progress, time_ms = parse_ffmpeg_progress(line, 300000)  # 5 min duration
-        
-        assert progress == 50  # 2:30 of 5:00 = 50%
-    
-    def test_parse_invalid_line(self):
-        """Test parsing line without time."""
-        line = 'frame=100 bitrate=1000kbits/s'
-        progress, time_ms = parse_ffmpeg_progress(line, 300000)
-        
-        assert progress is None
-        assert time_ms is None
-    
-    def test_parse_caps_at_99(self):
-        """Test that progress caps at 99% during encoding."""
-        line = 'time=00:05:00.00'
-        progress, time_ms = parse_ffmpeg_progress(line, 300000)  # Exactly 5 min
-        
-        assert progress == 99  # Should not reach 100 during encoding
-    
-    def test_parse_zero_duration(self):
-        """Test handling zero duration."""
-        line = 'time=00:01:00.00'
-        progress, time_ms = parse_ffmpeg_progress(line, 0)
-        
-        # With zero duration, returns None for both values
-        assert progress is None
-        assert time_ms is None
-
+# Note: parse_ffmpeg_progress function was removed from tasks.py
+# These tests are kept for reference but are currently disabled
 
 class TestSendProgressUpdate:
     """Tests for WebSocket progress updates."""

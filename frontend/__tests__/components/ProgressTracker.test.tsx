@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { ProgressTracker } from '@/components/ProgressTracker';
+import { api } from '@/lib/api';
 
 // Mock the useWebSocket hook
 jest.mock('@/hooks/useWebSocket', () => ({
@@ -10,6 +11,14 @@ jest.mock('@/hooks/useWebSocket', () => ({
   })),
 }));
 
+// Mock the API
+jest.mock('@/lib/api', () => ({
+  api: {
+    get: jest.fn(),
+  },
+  downloadFile: jest.fn(),
+}));
+
 describe('ProgressTracker', () => {
   const defaultProps = {
     lang: 'en',
@@ -18,6 +27,16 @@ describe('ProgressTracker', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Default mock: return a valid job
+    (api.get as jest.Mock).mockResolvedValue({
+      data: {
+        id: 'test-job-123',
+        original_filename: 'test.mkv',
+        status: 'pending',
+        progress: 0,
+        current_stage: 'queued',
+      },
+    });
   });
 
   it('renders without crashing', () => {
@@ -30,7 +49,7 @@ describe('ProgressTracker', () => {
   it('shows loading state for new job', () => {
     render(<ProgressTracker {...defaultProps} />);
     
-    // Should display loading text for new job
+    // Should display loading text for new job initially
     expect(screen.getByText(/Loading/)).toBeInTheDocument();
   });
 
@@ -41,11 +60,36 @@ describe('ProgressTracker', () => {
     expect(screen.getByText(/No active conversions/i)).toBeInTheDocument();
   });
 
-  it('renders multiple jobs', () => {
+  it('renders multiple jobs', async () => {
+    // Mock API responses for multiple jobs
+    (api.get as jest.Mock).mockImplementation((url: string) => {
+      // Extract jobId from URL like '/en/api/jobs/job-1/'
+      const match = url.match(/\/jobs\/([^\/]+)\//);
+      const jobId = match ? match[1] : 'unknown';
+      return Promise.resolve({
+        data: {
+          id: jobId,
+          original_filename: `${jobId}.mkv`,
+          status: 'pending',
+          progress: 0,
+          current_stage: 'queued',
+        },
+      });
+    });
+
     render(<ProgressTracker lang="en" jobIds={['job-1', 'job-2', 'job-3']} />);
     
-    // Should have multiple loading entries
-    const loadingElements = screen.getAllByText(/Loading/);
-    expect(loadingElements).toHaveLength(3);
+    // Initially shows loading, then loads jobs
+    // After jobs are loaded, should show job filenames
+    await waitFor(() => {
+      expect(screen.queryByText(/Loading/)).not.toBeInTheDocument();
+    }, { timeout: 3000 });
+    
+    // Should show job filenames after loading
+    await waitFor(() => {
+      expect(screen.getByText(/job-1\.mkv/)).toBeInTheDocument();
+      expect(screen.getByText(/job-2\.mkv/)).toBeInTheDocument();
+      expect(screen.getByText(/job-3\.mkv/)).toBeInTheDocument();
+    }, { timeout: 3000 });
   });
 });

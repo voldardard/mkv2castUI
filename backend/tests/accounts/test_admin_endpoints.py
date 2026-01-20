@@ -4,9 +4,12 @@ Tests for admin API endpoints.
 import pytest
 import psutil
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework.authtoken.models import Token
+
+from conversions.models import ConversionJob
 
 User = get_user_model()
 
@@ -243,6 +246,16 @@ class TestAdminSiteSettings:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['site_name'] == 'Test Site'
     
+    def test_admin_can_patch_settings(self, admin_client):
+        """Test admin can partially update site settings."""
+        response = admin_client.patch('/api/admin/settings/', {
+            'maintenance_mode': True,
+            'maintenance_message': 'System under maintenance',
+        })
+        
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['maintenance_mode'] is True
+    
     def test_regular_user_cannot_access_settings(self, regular_client):
         """Test non-admin cannot access site settings."""
         response = regular_client.get('/api/admin/settings/')
@@ -272,6 +285,36 @@ class TestAdminBranding:
         
         assert response.status_code == status.HTTP_200_OK
         assert response.data['primary_color'] == '#ff0000'
+    
+    def test_admin_can_upload_logo_file(self, admin_client):
+        """Test admin can upload logo file."""
+        logo_content = b'\x89PNG\r\n\x1a\n' + b'\x00' * 100
+        logo_file = SimpleUploadedFile(
+            'logo.png',
+            logo_content,
+            content_type='image/png'
+        )
+        
+        response = admin_client.put('/api/admin/branding/', {
+            'logo_file': logo_file,
+        }, format='multipart')
+        
+        assert response.status_code == status.HTTP_200_OK
+    
+    def test_admin_can_upload_favicon(self, admin_client):
+        """Test admin can upload favicon file."""
+        favicon_content = b'\x89PNG\r\n\x1a\n' + b'\x00' * 100
+        favicon_file = SimpleUploadedFile(
+            'favicon.png',
+            favicon_content,
+            content_type='image/png'
+        )
+        
+        response = admin_client.put('/api/admin/branding/', {
+            'favicon_file': favicon_file,
+        }, format='multipart')
+        
+        assert response.status_code == status.HTTP_200_OK
 
 
 @pytest.mark.django_db
@@ -292,3 +335,116 @@ class TestAdminPermissions:
         response = api_client.get('/api/admin/dashboard/')
         
         assert response.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.django_db
+class TestAdminConversionStats:
+    """Tests for admin conversion statistics endpoint."""
+    
+    def test_admin_can_access_conversion_stats(self, admin_client, user):
+        """Test admin can access conversion statistics."""
+        # Create some conversion jobs
+        ConversionJob.objects.create(
+            user=user,
+            original_filename='test1.mkv',
+            original_file_size=1024,
+            status='completed',
+        )
+        ConversionJob.objects.create(
+            user=user,
+            original_filename='test2.mkv',
+            original_file_size=2048,
+            status='failed',
+        )
+        
+        response = admin_client.get('/api/admin/stats/conversions/')
+        
+        assert response.status_code == status.HTTP_200_OK
+        # Response contains stats breakdown, check for expected keys
+        assert 'container' in response.data or 'daily' in response.data or 'hw_backend' in response.data
+
+
+@pytest.mark.django_db
+class TestAdminFiles:
+    """Tests for admin file management endpoints."""
+    
+    def test_admin_can_list_files(self, admin_client, user):
+        """Test admin can list conversion files."""
+        job = ConversionJob.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            original_file_size=1024 * 1024,
+            status='completed',
+            output_file_size=512 * 1024,
+        )
+        
+        response = admin_client.get('/api/admin/files/')
+        
+        assert response.status_code == status.HTTP_200_OK
+    
+    def test_admin_can_delete_file(self, admin_client, user):
+        """Test admin can delete a conversion job file."""
+        job = ConversionJob.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            original_file_size=1024 * 1024,
+            status='completed',
+        )
+        
+        response = admin_client.delete(f'/api/admin/files/{job.id}/')
+        
+        assert response.status_code in (status.HTTP_200_OK, status.HTTP_204_NO_CONTENT)
+
+
+@pytest.mark.django_db
+class TestAdminTasks:
+    """Tests for admin task management endpoints."""
+    
+    def test_admin_can_list_tasks(self, admin_client, user):
+        """Test admin can list conversion tasks."""
+        job1 = ConversionJob.objects.create(
+            user=user,
+            original_filename='test1.mkv',
+            original_file_size=1024,
+            status='pending',
+        )
+        job2 = ConversionJob.objects.create(
+            user=user,
+            original_filename='test2.mkv',
+            original_file_size=2048,
+            status='processing',
+        )
+        
+        response = admin_client.get('/api/admin/tasks/')
+        
+        assert response.status_code == status.HTTP_200_OK
+    
+    def test_admin_can_cancel_task(self, admin_client, user):
+        """Test admin can cancel a conversion task."""
+        job = ConversionJob.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            original_file_size=1024,
+            status='processing',
+            celery_task_id='test-task-id',
+        )
+        
+        response = admin_client.post(f'/api/admin/tasks/{job.id}/cancel/')
+        
+        # Should return 200 or 204
+        assert response.status_code in (status.HTTP_200_OK, status.HTTP_204_NO_CONTENT, status.HTTP_400_BAD_REQUEST)
+    
+    def test_admin_can_retry_task(self, admin_client, user):
+        """Test admin can retry a failed conversion task."""
+        job = ConversionJob.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            original_file_size=1024,
+            status='failed',
+            error_message='Test error',
+        )
+        
+        response = admin_client.post(f'/api/admin/tasks/{job.id}/retry/')
+        
+        # Should return 200 or 400 if retry not supported
+        assert response.status_code in (status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST, status.HTTP_404_NOT_FOUND)

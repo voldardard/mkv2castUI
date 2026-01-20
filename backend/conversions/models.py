@@ -5,18 +5,86 @@ import os
 import uuid
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 
 
 def upload_to_path(instance, filename):
-    """Generate upload path for original files."""
-    ext = os.path.splitext(filename)[1]
-    return f'uploads/{instance.user.id}/{instance.id}{ext}'
+    """Generate upload path for original files.
+    
+    For PendingFile: uses request_id (UUID generated at file selection)
+    For ConversionJob: uses job_id (legacy support)
+    """
+    if hasattr(instance, 'request_id'):
+        # PendingFile case
+        ext = os.path.splitext(filename)[1]
+        return f'upload/{instance.request_id}/{filename}'
+    else:
+        # ConversionJob legacy case
+        ext = os.path.splitext(filename)[1]
+        return f'uploads/{instance.user.id}/{instance.id}{ext}'
 
 
 def output_to_path(instance, filename):
     """Generate path for converted output files."""
     ext = os.path.splitext(filename)[1]
-    return f'outputs/{instance.user.id}/{instance.id}{ext}'
+    return f'finished/{instance.id}/{filename}'
+
+
+class PendingFile(models.Model):
+    """
+    Represents a file uploaded to S3/MinIO before conversion job creation.
+    
+    Allows immediate upload when file is selected, analysis of metadata,
+    and configuration before creating the actual conversion job.
+    """
+    STATUS_CHOICES = [
+        ('uploading', 'Uploading'),
+        ('analyzing', 'Analyzing'),
+        ('ready', 'Ready'),
+        ('expired', 'Expired'),
+        ('used', 'Used'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    request_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, help_text='UUID generated at file selection')
+    
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='pending_files'
+    )
+    
+    original_filename = models.CharField(max_length=500)
+    file_key = models.CharField(max_length=1000, help_text='S3/MinIO object key (path)')
+    file_size = models.BigIntegerField(default=0)
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='uploading')
+    metadata = models.JSONField(default=dict, blank=True, help_text='Extracted metadata (audio tracks, subtitles, etc.)')
+    
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(help_text='When this file will be deleted if not used')
+    
+    class Meta:
+        db_table = 'conversions_pending_file'
+        ordering = ['-uploaded_at']
+        verbose_name = 'Pending File'
+        verbose_name_plural = 'Pending Files'
+        indexes = [
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['expires_at']),
+        ]
+    
+    def __str__(self):
+        return f'{self.original_filename} ({self.status})'
+    
+    def save(self, *args, **kwargs):
+        """Set expires_at if not provided."""
+        if not self.expires_at:
+            from accounts.models import SiteSettings
+            settings = SiteSettings.get_settings()
+            hours = settings.pending_file_expiry_hours
+            self.expires_at = timezone.now() + timezone.timedelta(hours=hours)
+        super().save(*args, **kwargs)
 
 
 class ConversionJob(models.Model):
@@ -74,10 +142,20 @@ class ConversionJob(models.Model):
     
     # File fields
     original_filename = models.CharField(max_length=500)
-    original_file = models.FileField(upload_to=upload_to_path, max_length=500)
+    original_file = models.FileField(upload_to=upload_to_path, max_length=500, null=True, blank=True, help_text='Legacy: local file path (for migration)')
     original_file_size = models.BigIntegerField(default=0)
     output_file = models.FileField(upload_to=output_to_path, max_length=500, null=True, blank=True)
     output_file_size = models.BigIntegerField(default=0)
+    
+    # PendingFile relationship (new upload flow)
+    pending_file = models.ForeignKey(
+        'PendingFile',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='conversion_jobs',
+        help_text='PendingFile used to create this job (if uploaded via new flow)'
+    )
     
     # Status tracking
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')

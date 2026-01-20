@@ -62,6 +62,95 @@ function getCookie(name: string): string | null {
 }
 
 // API helper functions
+/**
+ * Request presigned upload URL for direct file upload to S3/MinIO
+ */
+export async function requestUploadUrl(lang: string, filename: string, size: number) {
+  const response = await api.post(`/${lang}/api/upload/presigned/`, {
+    filename,
+    size,
+  });
+  return response.data; // { file_id, upload_url, key, expires_in }
+}
+
+/**
+ * Upload file directly to S3/MinIO using presigned URL
+ */
+export async function uploadFileDirectly(
+  uploadUrl: string,
+  file: File,
+  onProgress?: (progress: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && onProgress) {
+        const progress = Math.round((e.loaded / e.total) * 100);
+        onProgress(progress);
+      }
+    });
+    
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`Upload failed with status ${xhr.status}`));
+      }
+    });
+    
+    xhr.addEventListener('error', () => {
+      reject(new Error('Upload failed'));
+    });
+    
+    xhr.addEventListener('abort', () => {
+      reject(new Error('Upload aborted'));
+    });
+    
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Content-Type', 'video/x-matroska');
+    xhr.send(file);
+  });
+}
+
+/**
+ * Confirm upload completion and trigger file analysis
+ */
+export async function confirmUploadComplete(lang: string, fileId: string) {
+  const response = await api.post(`/${lang}/api/upload/${fileId}/complete/`);
+  return response.data; // { status, file_id }
+}
+
+/**
+ * Get file metadata (with polling if analyzing)
+ */
+export async function getFileMetadata(lang: string, fileId: string): Promise<{
+  status: string;
+  metadata?: any;
+  message?: string;
+}> {
+  const response = await api.get(`/${lang}/api/upload/${fileId}/metadata/`);
+  return response.data;
+}
+
+/**
+ * Create conversion job from pending file
+ */
+export async function createJobFromFile(
+  lang: string,
+  fileId: string,
+  options: Record<string, any>
+) {
+  const response = await api.post(`/${lang}/api/jobs/create-from-file/`, {
+    file_id: fileId,
+    options,
+  });
+  return response.data;
+}
+
+/**
+ * Legacy upload function (fallback)
+ */
 export async function uploadFile(
   lang: string,
   file: File,
@@ -122,7 +211,7 @@ export async function getUserStats(lang: string) {
 
 /**
  * Download a converted file with authentication
- * Uses blob response and triggers browser download
+ * Uses presigned URL from backend and triggers browser download
  */
 export async function downloadFile(lang: string, jobId: string, filename: string): Promise<void> {
   try {
@@ -132,64 +221,59 @@ export async function downloadFile(lang: string, jobId: string, filename: string
       throw new Error('Authentication required');
     }
 
-    // Create a temporary form to trigger download with proper headers
-    // This bypasses axios interceptors and allows browser to handle download natively
-    const form = document.createElement('form');
-    form.method = 'GET';
-    form.action = `/${lang}/api/jobs/${jobId}/download/`;
-    form.style.display = 'none';
-    
-    // Add CSRF token if available
-    const csrfToken = getCookie('csrftoken');
-    if (csrfToken) {
-      const csrfInput = document.createElement('input');
-      csrfInput.type = 'hidden';
-      csrfInput.name = 'csrfmiddlewaretoken';
-      csrfInput.value = csrfToken;
-      form.appendChild(csrfInput);
-    }
-    
-    document.body.appendChild(form);
-    
-    // Encode filename for URL (use encodeURIComponent for safe encoding)
+    // Encode filename for URL
     const encodedFilename = encodeURIComponent(filename);
     
-    // Use fetch with proper headers to get the file
-    // Include filename in URL for better browser compatibility
-    const response = await fetch(`/${lang}/api/jobs/${jobId}/download/${encodedFilename}`, {
+    // Request download URL from backend
+    const response = await api.get(`/${lang}/api/jobs/${jobId}/download/${encodedFilename}`);
+    
+    // Check if response contains download_url (presigned URL)
+    if (response.data.download_url) {
+      // Use presigned URL directly
+      const downloadUrl = response.data.download_url;
+      const downloadFilename = response.data.filename || filename;
+      
+      // Create link and trigger download
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = downloadFilename;
+      link.target = '_blank';
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      setTimeout(() => {
+        document.body.removeChild(link);
+      }, 100);
+      
+      return;
+    }
+    
+    // Fallback: Legacy blob download (for local files during migration)
+    // This handles the case where backend returns FileResponse instead of presigned URL
+    const blobResponse = await fetch(`/${lang}/api/jobs/${jobId}/download/${encodedFilename}`, {
       method: 'GET',
       headers: {
         'Authorization': `Token ${token}`,
-        ...(csrfToken && { 'X-CSRFToken': csrfToken }),
       },
     });
     
-    // Check if response is OK
-    if (!response.ok) {
-      // Try to parse error
-      const errorText = await response.text();
+    if (!blobResponse.ok) {
+      const errorText = await blobResponse.text();
       try {
         const error = JSON.parse(errorText);
         throw new Error(error.detail || 'Download failed');
       } catch {
-        throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+        throw new Error(`Download failed: ${blobResponse.status} ${blobResponse.statusText}`);
       }
     }
     
-    // Check Content-Type
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Download failed');
-    }
-    
     // Get filename from Content-Disposition header
-    const contentDisposition = response.headers.get('content-disposition');
+    const contentDisposition = blobResponse.headers.get('content-disposition');
     let downloadFilename = filename;
     
     if (contentDisposition) {
-      // Try to extract filename from Content-Disposition
-      // Support both filename="..." and filename*=UTF-8''...
       const filenameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/) ||
                            contentDisposition.match(/filename="?([^";]+)"?/);
       
@@ -203,7 +287,7 @@ export async function downloadFile(lang: string, jobId: string, filename: string
     }
     
     // Get blob and trigger download
-    const blob = await response.blob();
+    const blob = await blobResponse.blob();
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -215,7 +299,6 @@ export async function downloadFile(lang: string, jobId: string, filename: string
     // Cleanup
     setTimeout(() => {
       document.body.removeChild(link);
-      document.body.removeChild(form);
       window.URL.revokeObjectURL(url);
     }, 100);
   } catch (error: any) {

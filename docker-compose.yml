@@ -9,7 +9,6 @@ services:
       - "8080:80"
     volumes:
       - static_files:/app/static:ro
-      - media_files:/app/media:ro
     depends_on:
       - frontend
       - backend
@@ -61,6 +60,10 @@ services:
       - S3_SECRET_KEY=${S3_SECRET_KEY}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
       - S3_REGION=${S3_REGION:-us-east-1}
+      # MinIO settings (default if S3 not configured)
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
@@ -69,10 +72,10 @@ services:
       - MKV2CAST_MAX_FILE_SIZE=${MKV2CAST_MAX_FILE_SIZE:-10737418240}
     volumes:
       - static_files:/app/static
-      - media_files:/app/media
     depends_on:
       - postgres
       - redis
+      - minio
     restart: unless-stopped
     networks:
       - mkv2cast-network
@@ -93,8 +96,6 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL}
-    volumes:
-      - media_files:/app/media
     depends_on:
       - postgres
       - redis
@@ -123,6 +124,10 @@ services:
       - S3_ACCESS_KEY=${S3_ACCESS_KEY}
       - S3_SECRET_KEY=${S3_SECRET_KEY}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      # MinIO settings (default if S3 not configured)
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
       # mkv2cast encoding settings
       - MKV2CAST_DEFAULT_HW=${MKV2CAST_DEFAULT_HW:-auto}
       - MKV2CAST_VAAPI_DEVICE=${MKV2CAST_VAAPI_DEVICE:-}
@@ -132,13 +137,12 @@ services:
       - MKV2CAST_DEFAULT_QSV_QUALITY=${MKV2CAST_DEFAULT_QSV_QUALITY:-23}
       - MKV2CAST_DEFAULT_AUDIO_BITRATE=${MKV2CAST_DEFAULT_AUDIO_BITRATE:-192k}
       - MKV2CAST_MAX_FILE_SIZE=${MKV2CAST_MAX_FILE_SIZE:-10737418240}
-    volumes:
-      - media_files:/app/media
     devices:
       - /dev/dri:/dev/dri  # For VAAPI hardware acceleration
     depends_on:
       - postgres
       - redis
+      - minio
     restart: unless-stopped
     networks:
       - mkv2cast-network
@@ -181,6 +185,30 @@ services:
       timeout: 5s
       retries: 5
 
+  # ==========================================================================
+  # MinIO - S3-Compatible Object Storage
+  # ==========================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: mkv2cast-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    networks:
+      - mkv2cast-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
 # =============================================================================
 # Volumes
 # =============================================================================
@@ -188,7 +216,7 @@ volumes:
   postgres_data:
   redis_data:
   static_files:
-  media_files:
+  minio_data:
 
 # =============================================================================
 # Networks

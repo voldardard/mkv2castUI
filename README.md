@@ -6,17 +6,38 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![Node 20+](https://img.shields.io/badge/Node.js-20+-green.svg)](https://nodejs.org/)
 
-> **BETA SOFTWARE (v0.1.0-beta)** - This software is under active development. APIs and features may change.
+> **BETA SOFTWARE (v0.2.0-beta)** - This software is under active development. APIs and features may change.
 
-Web UI for [mkv2cast](https://pypi.org/project/mkv2cast/) - Smart MKV to Chromecast-compatible converter.
+**mkv2castUI** is a modern, self-hosted web application for converting MKV video files to Chromecast-compatible formats. Built on top of the intelligent [mkv2cast](https://pypi.org/project/mkv2cast/) CLI tool, it provides a beautiful web interface with real-time progress tracking, hardware acceleration support, and enterprise-grade authentication.
 
 📖 **[Full Documentation](https://voldardard.github.io/mkv2castUI/)** | 🐍 **[mkv2cast CLI Docs](https://voldardard.github.io/mkv2cast/)** | 📦 **[PyPI](https://pypi.org/project/mkv2cast/)**
+
+---
+
+## Table of Contents
+
+- [Why mkv2castUI?](#-why-mkv2castui)
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Quick Start](#-quick-start)
+- [Docker & Build Options](#-docker--build-options)
+- [Makefile Commands](#-makefile-commands)
+- [Configuration](#-configuration)
+- [Deployment](#-deployment)
+- [API Reference](#-api-reference)
+- [Development](#-development)
+- [Testing](#-testing)
+- [Troubleshooting](#-troubleshooting)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
 
 ---
 
 ## 🎯 Why mkv2castUI?
 
 ### The Problem
+
 You have MKV files with various codecs (HEVC, DTS, AC3...) that won't play on your Chromecast or other streaming devices. Traditional converters either:
 - Re-encode everything (slow, quality loss)
 - Require command-line knowledge
@@ -24,10 +45,11 @@ You have MKV files with various codecs (HEVC, DTS, AC3...) that won't play on yo
 - Don't optimize for Chromecast
 
 ### The Solution
+
 **mkv2castUI** combines the intelligence of mkv2cast with a modern web interface:
 
 - **🧠 Smart Analysis** - Only transcodes streams that need conversion
-- **⚡ Hardware Acceleration** - VAAPI/QSV for blazing fast encoding
+- **⚡ Hardware Acceleration** - VAAPI/QSV/NVENC for blazing fast encoding
 - **📊 Real-time Progress** - WebSocket-based live updates with ETA
 - **🏠 100% On-Premise** - Your files never leave your server
 - **🔐 Flexible Auth** - OAuth, 2FA, or no-auth local mode
@@ -53,37 +75,9 @@ You have MKV files with various codecs (HEVC, DTS, AC3...) that won't play on yo
 | **REST API** | Full programmatic access |
 | **Internationalization** | 5 languages supported |
 | **Responsive Design** | Works on desktop and mobile |
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Docker 20.10+ & Docker Compose v2+
-- (Optional) Intel/AMD GPU for hardware acceleration
-
-### 5-Minute Setup
-
-```bash
-# 1. Clone
-git clone https://github.com/voldardard/mkv2castUI.git
-cd mkv2castUI
-
-# 2. Configure (local mode - no auth required)
-cp .env.example .env
-echo "REQUIRE_AUTH=false" >> .env
-echo "DJANGO_SECRET_KEY=$(openssl rand -hex 32)" >> .env
-echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> .env
-
-# 3. Build and run
-docker-compose build
-docker-compose up -d
-
-# 4. Open http://localhost:8080
-```
-
-That's it! 🎉
+| **S3-Compatible Storage** | Support for AWS S3, MinIO, Backblaze B2, etc. |
+| **Docker Compose** | One-command deployment |
+| **Health Checks** | Built-in monitoring endpoints |
 
 ---
 
@@ -120,12 +114,415 @@ mkv2castUI/
 | **celery** | - | Celery | Background workers |
 | **postgres** | 5432 | PostgreSQL 16 | Database |
 | **redis** | 6379 | Redis 7 | Cache & message broker |
+| **minio** | 9000/9001 | MinIO | S3-compatible storage (dev) |
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Docker** 20.10+ & **Docker Compose** v2+
+- **4GB RAM** minimum (8GB recommended for encoding)
+- **20GB disk space** (more for video files)
+- (Optional) Intel/AMD GPU for hardware acceleration
+
+### 5-Minute Setup
+
+```bash
+# 1. Clone
+git clone https://github.com/voldardard/mkv2castUI.git
+cd mkv2castUI
+
+# 2. Configure (local mode - no auth required)
+cp .env.example .env
+echo "REQUIRE_AUTH=false" >> .env
+echo "DJANGO_SECRET_KEY=$(openssl rand -hex 32)" >> .env
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> .env
+
+# 3. Build and run
+make build
+make up
+
+# 4. Open http://localhost:8080
+```
+
+That's it! 🎉
+
+---
+
+## 🐳 Docker & Build Options
+
+### Docker Compose Files
+
+#### `docker-compose.yml` (Development)
+
+Development configuration with local builds:
+
+```bash
+# Build all images from source
+docker-compose build
+
+# Build specific service
+docker-compose build backend
+docker-compose build frontend
+docker-compose build nginx
+
+# Build without cache
+docker-compose build --no-cache
+
+# Build with specific build args
+docker-compose build --build-arg NODE_ENV=production frontend
+```
+
+**Services:**
+- All services built from local Dockerfiles
+- Hot-reload support for development
+- MinIO included for local S3-compatible storage
+- Volume mounts for development
+
+#### `docker-compose.prod.yml` (Production)
+
+Production configuration using pre-built images from GitHub Container Registry:
+
+```bash
+# Pull latest images
+docker-compose -f docker-compose.prod.yml pull
+
+# Pull specific service
+docker-compose -f docker-compose.prod.yml pull backend
+
+# Start services
+docker-compose -f docker-compose.prod.yml up -d
+
+# View logs
+docker-compose -f docker-compose.prod.yml logs -f
+```
+
+**Services:**
+- Uses pre-built images from `ghcr.io/voldardard/mkv2castui-*`
+- Optimized for production
+- Automatic migrations on startup
+- No MinIO (use external S3)
+
+### Docker Build Options
+
+#### Backend Dockerfile
+
+**Build Arguments:**
+- None (uses Python 3.12-slim base image)
+
+**Environment Variables (build-time):**
+- `PYTHONDONTWRITEBYTECODE=1`
+- `PYTHONUNBUFFERED=1`
+- `PYTHONPATH=/app`
+- `DJANGO_SETTINGS_MODULE=mkv2cast_api.settings`
+
+**System Dependencies:**
+- FFmpeg (video processing)
+- PostgreSQL client libraries
+- VAAPI drivers (Intel/AMD GPU support)
+- Pillow dependencies (image processing)
+
+**Example:**
+```bash
+cd backend
+docker build -t mkv2castui-backend:latest .
+docker build --no-cache -t mkv2castui-backend:dev .
+```
+
+#### Frontend Dockerfile
+
+**Multi-stage Build:**
+1. **Builder stage**: Installs dependencies and builds Next.js app
+2. **Runner stage**: Minimal production image with only built files
+
+**Build Arguments:**
+- None (uses Node 20-alpine base image)
+
+**Environment Variables (build-time):**
+- `NEXT_TELEMETRY_DISABLED=1`
+- `NODE_ENV=production` (runner stage)
+
+**Example:**
+```bash
+cd frontend
+docker build -t mkv2castui-frontend:latest .
+docker build --target builder -t mkv2castui-frontend:builder .
+```
+
+#### Nginx Dockerfile
+
+**Base Image:** `nginx:alpine`
+
+**Configuration:**
+- Custom `nginx.conf` for routing
+- Static file serving
+- WebSocket proxy support
+- Large file upload support (10GB default)
+
+**Example:**
+```bash
+cd nginx
+docker build -t mkv2castui-nginx:latest .
+```
+
+### Docker Compose Commands
+
+#### Service Management
+
+```bash
+# Start all services
+docker-compose up -d
+# or
+make up
+
+# Stop all services
+docker-compose down
+# or
+make down
+
+# Restart specific service
+docker-compose restart backend
+
+# Stop and remove volumes
+docker-compose down -v
+
+# View service status
+docker-compose ps
+
+# View resource usage
+docker stats
+```
+
+#### Logs
+
+```bash
+# All services
+docker-compose logs -f
+# or
+make logs
+
+# Specific service
+docker-compose logs -f backend
+docker-compose logs -f celery
+docker-compose logs -f frontend
+
+# Last 100 lines
+docker-compose logs --tail=100 backend
+
+# Since timestamp
+docker-compose logs --since 2024-01-01T00:00:00 backend
+```
+
+#### Executing Commands
+
+```bash
+# Django management commands
+docker-compose exec backend python manage.py migrate
+docker-compose exec backend python manage.py createsuperuser
+docker-compose exec backend python manage.py createadminuser --username admin --email admin@example.com --password 'pass'
+
+# Shell access
+docker-compose exec backend bash
+docker-compose exec frontend sh
+docker-compose exec postgres psql -U mkv2cast
+
+# Check VAAPI
+docker-compose exec celery vainfo
+
+# Check Redis
+docker-compose exec redis redis-cli ping
+```
+
+#### Scaling Services
+
+```bash
+# Scale Celery workers
+docker-compose up -d --scale celery=4
+
+# Scale backend (requires load balancer)
+docker-compose up -d --scale backend=3
+```
+
+#### Volumes
+
+```bash
+# List volumes
+docker volume ls | grep mkv2cast
+
+# Inspect volume
+docker volume inspect mkv2castui_postgres_data
+
+# Backup volume
+docker run --rm -v mkv2castui_postgres_data:/data -v $(pwd):/backup \
+  alpine tar czf /backup/postgres_backup.tar.gz /data
+
+# Remove unused volumes
+docker volume prune
+```
+
+#### Networks
+
+```bash
+# Inspect network
+docker network inspect mkv2castui_mkv2cast-network
+
+# Connect external container
+docker network connect mkv2castui_mkv2cast-network my-container
+```
+
+### Hardware Acceleration Setup
+
+#### VAAPI (Intel/AMD GPU)
+
+```bash
+# Check device on host
+ls -la /dev/dri/
+
+# Device is automatically mounted in docker-compose.yml
+# Verify in container
+docker-compose exec celery vainfo
+```
+
+#### NVIDIA NVENC
+
+Requires `nvidia-docker2` and runtime configuration:
+
+```yaml
+# Add to docker-compose.yml celery service
+runtime: nvidia
+environment:
+  - NVIDIA_VISIBLE_DEVICES=all
+```
+
+```bash
+# Install nvidia-docker2
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+sudo apt-get update && sudo apt-get install -y nvidia-docker2
+sudo systemctl restart docker
+```
+
+---
+
+## 🔧 Makefile Commands
+
+The project includes a comprehensive Makefile for common operations:
+
+### Version Management
+
+```bash
+# Show current version
+make version
+
+# Prepare release (updates versions in all files)
+make release VERSION=v0.2.0
+
+# Prepare, commit, tag and push release
+make release-push VERSION=v0.2.0
+
+# Check release readiness
+make check
+```
+
+### Docker Operations
+
+```bash
+# Build Docker images
+make build
+
+# Build production images
+make build-prod
+
+# Start all services
+make up
+
+# Stop all services
+make down
+
+# View logs
+make logs
+
+# Clean Docker resources (volumes, images)
+make clean
+```
+
+### Database Migrations
+
+```bash
+# Create migrations (Docker)
+make migrations
+
+# Apply migrations (Docker)
+make migrate
+
+# Check for pending migrations
+make migrations-check
+
+# Create migrations (local, no Docker)
+make migrations-backend
+
+# Apply migrations (local, no Docker)
+make migrate-backend
+```
+
+### Testing
+
+```bash
+# Run all tests
+make test
+
+# Backend tests only
+make test-backend
+
+# Frontend tests only
+make test-frontend
+
+# E2E tests
+make test-e2e
+```
+
+### Code Quality
+
+```bash
+# Run linters
+make lint
+
+# Format code
+make format
+```
+
+### Documentation
+
+```bash
+# Build documentation locally
+make docs-build
+
+# Build and serve documentation
+make docs-serve
+```
+
+### Development Setup
+
+```bash
+# Install all dependencies (backend, frontend, e2e)
+make install
+```
+
+### Help
+
+```bash
+# Show all available commands
+make help
+```
 
 ---
 
 ## ⚙️ Configuration
 
-All settings via environment variables. See [full configuration docs](https://voldardard.github.io/mkv2castUI/getting-started/configuration.html).
+All configuration is done via environment variables. See [full configuration docs](https://voldardard.github.io/mkv2castUI/getting-started/configuration.html).
 
 ### Essential Settings
 
@@ -134,9 +531,9 @@ All settings via environment variables. See [full configuration docs](https://vo
 | `REQUIRE_AUTH` | Enable OAuth authentication | `true` |
 | `DJANGO_SECRET_KEY` | Django secret key | **Required** |
 | `POSTGRES_PASSWORD` | Database password | **Required** |
-| `MKV2CAST_DEFAULT_HW` | Hardware backend (`auto`/`cpu`/`vaapi`/`qsv`) | `auto` |
+| `MKV2CAST_DEFAULT_HW` | Hardware backend (`auto`/`cpu`/`vaapi`/`qsv`/`nvenc`) | `auto` |
 | `MKV2CAST_DEFAULT_CRF` | Video quality (0-51, lower=better) | `23` |
-| `MKV2CAST_MAX_FILE_SIZE` | Max upload size (bytes) | 10GB |
+| `MKV2CAST_MAX_FILE_SIZE` | Max upload size (bytes) | `10737418240` (10GB) |
 
 ### Authentication Modes
 
@@ -174,20 +571,153 @@ MKV2CAST_DEFAULT_HW=qsv
 MKV2CAST_DEFAULT_HW=cpu
 ```
 
-> **Note for NVENC**: You need to install [nvidia-docker2](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) and add the NVIDIA runtime to your docker-compose.yml.
+### Advanced Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GUNICORN_WORKERS` | Number of Gunicorn workers | `4` |
+| `GUNICORN_TIMEOUT` | Request timeout (seconds) | `120` |
+| `CELERY_WORKER_CONCURRENCY` | Number of Celery worker processes | `2` |
+| `MKV2CAST_DEFAULT_PRESET` | Encoding preset (`ultrafast`/`fast`/`medium`/`slow`) | `medium` |
+| `MKV2CAST_DEFAULT_AUDIO_BITRATE` | Audio bitrate | `192k` |
+| `USE_S3` | Enable S3-compatible storage | `false` |
+| `S3_ENDPOINT` | S3 endpoint URL | - |
+| `S3_BUCKET_NAME` | S3 bucket name | `mkv2cast` |
+
+See [Configuration Documentation](https://voldardard.github.io/mkv2castUI/getting-started/configuration.html) for complete reference.
 
 ---
 
-## 🔄 Updating / Upgrading
+## 🚢 Deployment
 
-### Automatic Migrations
+mkv2castUI can be deployed using multiple methods. See [DEPLOYMENT.md](DEPLOYMENT.md) for complete guide.
+
+**Quick Links:**
+- 🐳 [Docker Hub Deployment](docs/deployment/docker-hub.md) - Pre-built images from Docker Hub
+- 🖥️ [Portainer Deployment](docs/deployment/portainer.md) - Web-based GUI deployment
+- 📦 [Deployment Bundle](docs/deployment/bundle.md) - Standalone deployment package
+
+### Quick Deployment Options
+
+#### Option 1: Docker Hub (Recommended)
+
+The easiest way to deploy using pre-built images from Docker Hub:
+
+```bash
+# 1. Clone repository or download docker-compose file
+git clone https://github.com/voldardard/mkv2castUI.git
+cd mkv2castUI
+
+# 2. Configure environment
+cp .env.example .env
+# Edit .env with your settings (minimum: DJANGO_SECRET_KEY, POSTGRES_PASSWORD)
+
+# 3. Pull and start
+docker-compose -f docker-compose.dockerhub.yml pull
+docker-compose -f docker-compose.dockerhub.yml up -d
+
+# 4. Create admin user
+docker-compose -f docker-compose.dockerhub.yml exec backend \
+  python manage.py createadminuser \
+  --username admin --email admin@example.com --password 'YourPassword'
+
+# 5. Access at http://localhost:8080
+```
+
+**Images available on Docker Hub:**
+- `docker.io/voldardard/mkv2castui-backend:latest`
+- `docker.io/voldardard/mkv2castui-frontend:latest`
+- `docker.io/voldardard/mkv2castui-nginx:latest`
+
+See [Docker Hub Deployment Guide](docs/deployment/docker-hub.md) for details.
+
+#### Option 2: Portainer Stack
+
+Deploy via Portainer's web interface in just a few clicks:
+
+**Method A: Using Stack File**
+1. Open Portainer → **Stacks** → **Add Stack**
+2. Name: `mkv2castui`
+3. Build method: **Web editor**
+4. Copy contents from [`portainer/stack.yml`](portainer/stack.yml)
+5. Configure environment variables (see below)
+6. Click **Deploy the stack**
+
+**Method B: Using Git Repository**
+1. Open Portainer → **Stacks** → **Add Stack**
+2. Select **Repository**
+3. Repository URL: `https://github.com/voldardard/mkv2castUI`
+4. Compose path: `portainer/stack.yml`
+5. Configure environment variables
+6. Click **Deploy the stack**
+
+**Required Environment Variables:**
+```yaml
+DJANGO_SECRET_KEY: "generate-with-openssl-rand-hex-32"
+POSTGRES_PASSWORD: "your-secure-password"
+DJANGO_ALLOWED_HOSTS: "localhost,your-domain.com"
+```
+
+**For local mode (no authentication):**
+```yaml
+REQUIRE_AUTH: "false"
+```
+
+See [Portainer Deployment Guide](docs/deployment/portainer.md) for complete instructions.
+
+#### Option 3: Deployment Bundle
+
+```bash
+# Download and extract bundle
+wget https://github.com/voldardard/mkv2castUI/releases/latest/download/deployment-bundle.tar.gz
+tar -xzf deployment-bundle.tar.gz
+cd deployment
+./deploy.sh
+```
+
+#### Option 4: GitHub Container Registry
+
+```bash
+# 1. Configure environment
+cp .env.example .env
+
+# 2. Pull latest images
+docker-compose -f docker-compose.prod.yml pull
+
+# 3. Start services
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+### Development Deployment
+
+```bash
+# Build and start
+make build
+make up
+
+# Access at http://localhost:8080
+```
+
+### Creating Admin User
+
+After deployment, create an admin user:
+
+```bash
+docker-compose exec backend python manage.py createadminuser \
+  --username admin \
+  --email admin@example.com \
+  --password 'SecurePassword123!'
+```
+
+### Updating / Upgrading
+
+#### Automatic Migrations
 
 Database migrations run **automatically** when the backend container starts. No manual intervention needed for schema updates.
 
-### Update Procedure
+#### Update Procedure
 
-**From Source (docker-compose build):**
-
+**From Source:**
 ```bash
 # 1. Stop services
 docker-compose down
@@ -201,15 +731,26 @@ docker-compose build --no-cache
 # 4. Start services (migrations run automatically)
 docker-compose up -d
 
-# 5. Check logs for migration status
+# 5. Check logs
 docker-compose logs backend | grep -i migrate
 ```
 
-**Using Pre-built Images (from GHCR):**
-
+**Using Pre-built Images (Docker Hub):**
 ```bash
 # 1. Stop services
-docker-compose down
+docker-compose -f docker-compose.dockerhub.yml down
+
+# 2. Pull latest images
+docker-compose -f docker-compose.dockerhub.yml pull
+
+# 3. Start services (migrations run automatically)
+docker-compose -f docker-compose.dockerhub.yml up -d
+```
+
+**Using Pre-built Images (GitHub Container Registry):**
+```bash
+# 1. Stop services
+docker-compose -f docker-compose.prod.yml down
 
 # 2. Pull latest images
 docker-compose -f docker-compose.prod.yml pull
@@ -218,21 +759,71 @@ docker-compose -f docker-compose.prod.yml pull
 docker-compose -f docker-compose.prod.yml up -d
 ```
 
-### Manual Migration (if needed)
+**Using Portainer:**
+1. Go to **Stacks** > **mkv2castui**
+2. Click **Editor**
+3. Update image tags if needed (or keep `latest` for auto-updates)
+4. Click **Update the stack**
 
-If you need to manually run migrations:
+### Backup & Restore
+
+#### Database Backup
 
 ```bash
-docker-compose exec backend python manage.py migrate
+# Create backup
+docker-compose exec postgres \
+  pg_dump -U mkv2cast mkv2cast > backup_$(date +%Y%m%d).sql
+
+# Restore backup
+cat backup.sql | docker-compose exec -T postgres \
+  psql -U mkv2cast mkv2cast
 ```
+
+#### Media Files Backup
+
+```bash
+# Backup media volume
+docker run --rm \
+  -v mkv2castui_media_files:/data \
+  -v $(pwd):/backup \
+  alpine tar czf /backup/media_backup.tar.gz /data
+```
+
+See [Deployment Documentation](https://voldardard.github.io/mkv2castUI/deployment/docker.html) for detailed guides.
 
 ---
 
-## 👤 Creating Admin User
+## 📚 API Reference
 
-### Using the CLI Command
+### REST API
 
-Create your first admin user with full access to the admin panel:
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/{lang}/api/jobs/` | GET | List conversion jobs |
+| `/{lang}/api/jobs/` | POST | Create new job |
+| `/{lang}/api/jobs/{id}/` | GET | Get job details |
+| `/{lang}/api/jobs/{id}/cancel/` | POST | Cancel job |
+| `/{lang}/api/jobs/{id}/download/` | GET | Download file |
+| `/{lang}/api/options/` | GET | Get available options |
+| `/api/auth/config/` | GET | Get auth configuration |
+
+### WebSocket
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws/conversion/{job_id}/');
+ws.onmessage = (event) => {
+  const { progress, status, eta_seconds } = JSON.parse(event.data);
+  console.log(`Progress: ${progress}%, ETA: ${eta_seconds}s`);
+};
+```
+
+See [Full API Documentation](https://voldardard.github.io/mkv2castUI/api/rest-api.html).
+
+---
+
+## 👤 Admin User Management
+
+### Creating Admin User
 
 ```bash
 docker-compose exec backend python manage.py createadminuser \
@@ -253,28 +844,9 @@ docker-compose exec backend python manage.py createadminuser \
 | `--no-superuser` | No | Create app admin only, not Django superuser |
 | `--update` | No | Update existing user if username/email exists |
 
-**Examples:**
-
-```bash
-# Create basic admin
-docker-compose exec backend python manage.py createadminuser \
-  --username admin --email admin@mycompany.com --password 'SecurePass!'
-
-# Create admin with full name
-docker-compose exec backend python manage.py createadminuser \
-  --username john.doe --email john@example.com --password 'MyPassword123' \
-  --first-name John --last-name Doe
-
-# Update existing admin password
-docker-compose exec backend python manage.py createadminuser \
-  --username admin --email admin@example.com --password 'NewPassword456' \
-  --update
-```
-
 ### Access Admin Panel
 
 Once logged in, administrators can access the admin panel at:
-
 - `http://localhost:8080/{lang}/admin/` (e.g., `/en/admin/`)
 
 The admin panel provides:
@@ -321,6 +893,14 @@ npx playwright test
 npx playwright show-report
 ```
 
+**Using Make:**
+```bash
+make test              # All tests
+make test-backend      # Backend only
+make test-frontend    # Frontend only
+make test-e2e         # E2E only
+```
+
 ### CI/CD
 
 Tests run automatically on GitHub Actions:
@@ -329,95 +909,6 @@ Tests run automatically on GitHub Actions:
 - ✅ E2E tests with Docker Compose
 - ✅ Security scanning with Trivy
 - ✅ Build verification
-
----
-
-## 📦 Distribution & Deployment
-
-### Docker Compose (Recommended)
-
-```bash
-# Development
-docker-compose up -d
-
-# Production (with SSL)
-docker-compose -f docker-compose.prod.yml up -d
-```
-
-### Docker Images
-
-```bash
-# Build images
-docker-compose build
-
-# Tag and push (example)
-docker tag mkv2castui-frontend:latest your-registry/mkv2castui-frontend:v0.1.0
-docker push your-registry/mkv2castui-frontend:v0.1.0
-```
-
-### Kubernetes / Helm
-
-Helm charts available in the [docs/deployment](https://voldardard.github.io/mkv2castUI/deployment/kubernetes.html).
-
-### Manual Installation
-
-**Backend:**
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python manage.py migrate
-gunicorn mkv2cast_api.wsgi:application
-```
-
-**Frontend:**
-```bash
-cd frontend
-npm install
-npm run build
-npm start
-```
-
----
-
-## 📚 API Reference
-
-### REST API
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/{lang}/api/jobs/` | GET | List conversion jobs |
-| `/{lang}/api/jobs/` | POST | Create new job |
-| `/{lang}/api/jobs/{id}/` | GET | Get job details |
-| `/{lang}/api/jobs/{id}/cancel/` | POST | Cancel job |
-| `/{lang}/api/jobs/{id}/download/` | GET | Download file |
-| `/{lang}/api/options/` | GET | Get available options |
-| `/api/auth/config/` | GET | Get auth configuration |
-
-### WebSocket
-
-```javascript
-const ws = new WebSocket('ws://localhost:8080/ws/conversion/{job_id}/');
-ws.onmessage = (event) => {
-  const { progress, status, eta_seconds } = JSON.parse(event.data);
-  console.log(`Progress: ${progress}%, ETA: ${eta_seconds}s`);
-};
-```
-
-See [full API documentation](https://voldardard.github.io/mkv2castUI/api/rest-api.html).
-
----
-
-## 🌍 Internationalization
-
-| Language | Code | URL Prefix |
-|----------|------|------------|
-| English | en | `/en/` |
-| Français | fr | `/fr/` |
-| Deutsch | de | `/de/` |
-| Español | es | `/es/` |
-| Italiano | it | `/it/` |
 
 ---
 
@@ -436,6 +927,7 @@ docker-compose logs backend
 # - Missing .env file: cp .env.example .env
 # - Database not ready: wait and retry
 # - Port in use: change in docker-compose.yml
+# - Permission issues: check volume permissions
 ```
 </details>
 
@@ -446,11 +938,14 @@ docker-compose logs backend
 # Check VAAPI in container
 docker-compose exec celery vainfo
 
-# Check device permissions
+# Check device permissions on host
 ls -la /dev/dri/
 
-# Explicit device
+# Explicit device in .env
 MKV2CAST_VAAPI_DEVICE=/dev/dri/renderD128
+
+# Verify device is mounted
+docker-compose exec celery ls -la /dev/dri/
 ```
 </details>
 
@@ -463,6 +958,10 @@ docker-compose logs daphne
 
 # Check nginx routing
 docker-compose logs nginx
+
+# Verify WebSocket endpoint
+curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  http://localhost:8080/ws/conversion/test/
 ```
 </details>
 
@@ -470,94 +969,77 @@ docker-compose logs nginx
 <summary><strong>Upload fails</strong></summary>
 
 ```bash
-# Increase max file size
+# Increase max file size in .env
 MKV2CAST_MAX_FILE_SIZE=21474836480  # 20GB
 
-# Check nginx client_max_body_size
+# Check nginx client_max_body_size in nginx.conf
+# Default is 10G
+
+# Check disk space
+df -h
+docker system df
+```
+</details>
+
+<details>
+<summary><strong>Database connection errors</strong></summary>
+
+```bash
+# Check PostgreSQL is running
+docker-compose ps postgres
+
+# Check connection string
+docker-compose exec backend python -c "from django.conf import settings; print(settings.DATABASES)"
+
+# Test connection
+docker-compose exec postgres psql -U mkv2cast -d mkv2cast -c "SELECT 1;"
+```
+</details>
+
+<details>
+<summary><strong>Out of memory errors</summary>
+
+```bash
+# Reduce Celery concurrency
+CELERY_WORKER_CONCURRENCY=1
+
+# Reduce Gunicorn workers
+GUNICORN_WORKERS=2
+
+# Check memory usage
+docker stats
+
+# Increase Docker memory limit in Docker Desktop settings
 ```
 </details>
 
 ---
 
+## 🌍 Internationalization
+
+| Language | Code | URL Prefix |
+|----------|------|------------|
+| English | en | `/en/` |
+| Français | fr | `/fr/` |
+| Deutsch | de | `/de/` |
+| Español | es | `/es/` |
+| Italiano | it | `/it/` |
+
+---
+
 ## 🗺️ Roadmap
 
-Voici les fonctionnalités prévues pour les prochaines versions de mkv2castUI. Cette roadmap est sujette à modifications selon les retours de la communauté.
+See [CHANGELOG.md](docs/development/changelog.md) for detailed roadmap and planned features.
 
-### 🎯 Court terme (v1.0.0 - v2.0.0)
+### Upcoming Features
 
-#### Casting depuis l'interface
-- **Détection automatique des Chromecast** : Scan du réseau local depuis le frontend React pour détecter les appareils Chromecast disponibles
-- **Sélection d'appareil par défaut** : Affichage d'un sélecteur en haut de l'interface pour choisir le Chromecast par défaut (uniquement si plusieurs appareils sont détectés)
-- **Bouton de cast intelligent** : 
-  - Bouton principal pour lancer le cast sur l'appareil par défaut
-  - Menu déroulant pour sélectionner un Chromecast spécifique
-  - Masquage automatique de l'interface si aucun appareil n'est détecté
-  - Masquage de la flèche du dropdown s'il n'y a qu'un seul appareil
-
-#### Métriques et monitoring
-- **Métriques par tâche** : Suivi détaillé de l'utilisation des ressources (CPU, GPU, mémoire, I/O) pour chaque conversion
-- **Dashboard de performance** : Visualisation des métriques pour identifier les tâches les plus gourmandes
-- **Alertes de ressources** : Notifications lorsque les ressources approchent de leurs limites
-
-#### Application Progressive Web App (PWA)
-- **React App installable** : Application installable sur navigateur (PWA) pour une expérience native
-- **Notifications navigateur** : Notifications push intégrées du navigateur pour les événements de conversion
-
-#### Gestion avancée des conversions
-- **Gestion des priorités** : Système de priorités pour les conversions en file d'attente
-- **Retry automatique** : Système de retry intelligent en cas d'échec de conversion
-- **Détection de qualité** : Analyse automatique de la qualité source et recommandations
-- **Batch intelligent** : Optimisation automatique de l'ordre des conversions pour maximiser l'efficacité
-
-### 🔮 Moyen terme (v3.0.0 - v5.0.0)
-
-#### Notifications et communication
-- **Notifications par email** : Notifications par email lors de la fin de conversion ou d'erreurs
-- **Webhooks** : Support pour webhooks personnalisés pour intégrations tierces
-
-#### Formats et appareils
-- **Support multi-format** : Export vers d'autres formats que MKV (MP4, WebM, etc.)
-- **Support multi-appareil** : Extension au-delà de Chromecast (Apple TV, Roku, Smart TV, etc.)
-
-#### Intégrations cloud
-- **Stockage cloud** : Intégration native avec S3, Google Cloud Storage, Azure Blob
-- **Synchronisation automatique** : Synchronisation automatique des fichiers convertis vers le cloud
-- **Import depuis le cloud** : Possibilité d'importer des fichiers directement depuis les services cloud
-
-#### Système de paiement et abonnements
-- **Intégration de paiement** : Support pour Stripe/PayPal pour les transactions
-- **Gestion d'abonnements** : 
-  - Plans avec différents niveaux (gratuit, basique, premium, entreprise)
-  - Limites configurables : nombre de conversions, workers, puissance de traitement
-  - Gestion des quotas et limites par utilisateur
-- **Tableau de bord d'abonnement** : Interface pour gérer son abonnement, voir l'utilisation et les limites
-
-#### Support des torrents
-- **Import de fichiers torrent** : Possibilité d'importer un fichier `.torrent` dans l'interface
-- **Sélection de fichiers** : Choix des fichiers à télécharger depuis le torrent (ou téléchargement de tous les fichiers)
-- **Intégration avec clients torrent** : Support pour transmission/qBittorrent pour le téléchargement
-
-#### Améliorations de l'expérience utilisateur
-- **Playlists** : Support pour créer et gérer des playlists de conversions
-- **Prévisualisation vidéo** : Lecteur vidéo intégré pour prévisualiser les fichiers avant/après conversion
-
-### 🚀 Long terme (v6.0.0+)
-
-#### Fonctionnalités avancées
-- **IA et optimisation** : Utilisation de l'IA pour optimiser automatiquement les paramètres de conversion
-- **Collaboration** : Partage de conversions et collaboration entre utilisateurs
-- **API GraphQL** : Alternative GraphQL en complément de l'API REST
-
-#### Écosystème
-- **Applications mobiles** : Applications iOS et Android natives
-- **Extensions navigateur** : Extension pour Chrome/Firefox pour un accès rapide
-- **CLI amélioré** : Interface en ligne de commande enrichie pour les utilisateurs avancés
-- **Plugins** : Système de plugins pour étendre les fonctionnalités
-
-### 🔮 Indéterminé
-
-#### Fonctionnalités complexes
-- **Conversion distribuée** : Support pour plusieurs workers sur différents serveurs (complexité très élevée)
+- **Casting from UI** - Direct Chromecast integration
+- **Metrics & Monitoring** - Per-task resource tracking
+- **PWA Support** - Installable web app
+- **Advanced Queue Management** - Priorities, retry, batch optimization
+- **Cloud Storage Integration** - Native S3, GCS, Azure support
+- **Email Notifications** - Conversion completion alerts
+- **Multi-format Export** - MP4, WebM support
 
 ---
 
@@ -573,8 +1055,7 @@ git clone https://github.com/YOUR_USERNAME/mkv2castUI.git
 git checkout -b feature/amazing-feature
 
 # 3. Make changes & test
-pytest  # backend
-npm test  # frontend
+make test  # Run all tests
 
 # 4. Submit PR
 ```

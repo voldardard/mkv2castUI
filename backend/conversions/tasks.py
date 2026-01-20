@@ -4,6 +4,10 @@ Celery tasks for video conversion.
 Uses mkv2cast as a Python library for conversion with progress callbacks.
 Reference: https://voldardard.github.io/mkv2cast/usage/python-api.html
 """
+import json
+import os
+import subprocess
+import tempfile
 from pathlib import Path
 
 from celery import shared_task
@@ -13,7 +17,8 @@ from asgiref.sync import async_to_sync
 from django.utils import timezone
 from django.conf import settings
 
-from .models import ConversionJob, ConversionLog
+from .models import ConversionJob, ConversionLog, PendingFile
+from accounts.storage_service import get_storage_service
 
 # Import mkv2cast library
 try:
@@ -235,11 +240,43 @@ def run_conversion(self, job_id: str):
     add_log(job, 'info', f'Starting analysis of {job.original_filename}')
     
     try:
-        # Get the input file path
-        input_path = Path(job.original_file.path)
+        # Determine input file source
+        storage_service = get_storage_service()
+        temp_dir = Path(tempfile.mkdtemp())
+        input_path = None
+        input_file_key = None
+        pending_file = None
         
-        # Create output directory
-        output_dir = Path(settings.MEDIA_ROOT) / 'outputs' / str(job.user.id)
+        if job.pending_file:
+            # New flow: use PendingFile
+            pending_file = job.pending_file
+            input_file_key = pending_file.file_key
+            input_path = temp_dir / pending_file.original_filename
+            
+            # Download from S3
+            add_log(job, 'info', f'Downloading file from S3: {input_file_key}')
+            storage_service.download_file(input_file_key, str(input_path))
+        elif job.original_file:
+            # Legacy flow: check if local file exists
+            try:
+                local_path = job.original_file.path if hasattr(job.original_file, 'path') else None
+                if local_path and os.path.exists(local_path):
+                    input_path = Path(local_path)
+                else:
+                    # File might be on S3 already
+                    input_file_key = job.original_file.name
+                    input_path = temp_dir / job.original_filename
+                    storage_service.download_file(input_file_key, str(input_path))
+            except Exception:
+                # Try S3
+                input_file_key = job.original_file.name
+                input_path = temp_dir / job.original_filename
+                storage_service.download_file(input_file_key, str(input_path))
+        else:
+            raise Exception('No input file available')
+        
+        # Create output directory (temp)
+        output_dir = temp_dir / 'output'
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Build mkv2cast configuration
@@ -298,9 +335,13 @@ def run_conversion(self, job_id: str):
                 output_path = Path(output_path)
                 output_size = output_path.stat().st_size
                 
-                # Set the output file path relative to MEDIA_ROOT
-                relative_path = output_path.relative_to(Path(settings.MEDIA_ROOT))
-                job.output_file.name = str(relative_path)
+                # Upload to S3/MinIO
+                output_file_key = f'finished/{job.id}/{output_path.name}'
+                add_log(job, 'info', f'Uploading result to S3: {output_file_key}')
+                storage_service.upload_file(str(output_path), output_file_key)
+                
+                # Set the output file key (S3 path)
+                job.output_file.name = output_file_key
                 job.output_file_size = output_size
                 job.status = 'completed'
                 job.progress = 100
@@ -309,9 +350,18 @@ def run_conversion(self, job_id: str):
                 
                 # Update user storage
                 job.user.storage_used += output_size
+                job.user.storage_used -= job.original_file_size  # Remove original from storage count
                 job.user.save(update_fields=['storage_used'])
                 
-                add_log(job, 'info', f'Conversion completed. Output: {output_path.name}, size: {output_size} bytes')
+                # Delete original file from S3 if it was uploaded via new flow
+                if pending_file and input_file_key:
+                    try:
+                        storage_service.delete_file(input_file_key)
+                        add_log(job, 'info', f'Deleted original file from S3: {input_file_key}')
+                    except Exception as e:
+                        add_log(job, 'warning', f'Failed to delete original file: {e}')
+                
+                add_log(job, 'info', f'Conversion completed. Output: {output_file_key}, size: {output_size} bytes')
             else:
                 # File was skipped (already compatible) OR remuxed
                 # For remux operations, mkv2cast may return None for output_path
@@ -343,19 +393,30 @@ def run_conversion(self, job_id: str):
                     
                     if found_output and found_output.exists():
                         output_size = found_output.stat().st_size
-                        relative_path = found_output.relative_to(Path(settings.MEDIA_ROOT))
-                        job.output_file.name = str(relative_path)
+                        # Upload to S3
+                        output_file_key = f'finished/{job.id}/{found_output.name}'
+                        add_log(job, 'info', f'Uploading remux result to S3: {output_file_key}')
+                        storage_service.upload_file(str(found_output), output_file_key)
+                        
+                        job.output_file.name = output_file_key
                         job.output_file_size = output_size
-                        add_log(job, 'info', f'Remux completed. Output: {found_output.name}, size: {output_size} bytes')
+                        add_log(job, 'info', f'Remux completed. Output: {output_file_key}, size: {output_size} bytes')
                     else:
                         # If remux file doesn't exist, use original file as output
                         # (file was already compatible, no remux needed)
-                        job.output_file = job.original_file
+                        if pending_file:
+                            # Use pending_file key
+                            job.output_file.name = pending_file.file_key
+                        else:
+                            job.output_file = job.original_file
                         job.output_file_size = job.original_file_size
                         add_log(job, 'info', f'File already compatible, using original as output')
                 else:
                     # File was skipped (already compatible)
-                    job.output_file = job.original_file
+                    if pending_file:
+                        job.output_file.name = pending_file.file_key
+                    else:
+                        job.output_file = job.original_file
                     job.output_file_size = job.original_file_size
                     add_log(job, 'info', f'File skipped (already compatible): {message}')
                 
@@ -364,9 +425,18 @@ def run_conversion(self, job_id: str):
                 job.completed_at = timezone.now()
                 job.save()
                 
+                # Delete original file from S3 if it was uploaded via new flow
+                if pending_file and input_file_key:
+                    try:
+                        storage_service.delete_file(input_file_key)
+                        add_log(job, 'info', f'Deleted original file from S3: {input_file_key}')
+                    except Exception as e:
+                        add_log(job, 'warning', f'Failed to delete original file: {e}')
+                
                 # Update user storage for output file
-                if job.output_file and job.output_file != job.original_file:
+                if job.output_file and job.output_file.name != (pending_file.file_key if pending_file else None):
                     job.user.storage_used += job.output_file_size
+                    job.user.storage_used -= job.original_file_size  # Remove original
                     job.user.save(update_fields=['storage_used'])
             
             send_progress_update(job_id, 100, 'completed', 'DONE')
@@ -393,6 +463,14 @@ def run_conversion(self, job_id: str):
         
         add_log(job, 'error', f'Conversion failed with exception: {error_msg}')
         send_progress_update(job_id, 0, 'failed', error=error_msg)
+    finally:
+        # Cleanup temp directory
+        try:
+            if 'temp_dir' in locals() and temp_dir.exists():
+                import shutil
+                shutil.rmtree(temp_dir)
+        except Exception:
+            pass
 
 
 def cancel_conversion(task_id: str):
@@ -404,3 +482,147 @@ def cancel_conversion(task_id: str):
     
     result = AsyncResult(task_id, app=app)
     result.revoke(terminate=True, signal='SIGTERM')
+
+
+@shared_task(bind=True)
+def analyze_pending_file(self, file_id: str):
+    """
+    Analyze a pending file to extract metadata (audio tracks, subtitles, etc.).
+    
+    Uses ffprobe to extract:
+    - Audio tracks (language, codec, index, forced, default)
+    - Subtitle tracks (language, codec, index, forced, default)
+    - Video codec
+    - Duration
+    - Resolution
+    """
+    try:
+        pending_file = PendingFile.objects.get(id=file_id)
+    except PendingFile.DoesNotExist:
+        return
+    
+    if pending_file.status != 'analyzing':
+        return
+    
+    storage_service = get_storage_service()
+    temp_dir = Path(tempfile.mkdtemp())
+    local_file_path = temp_dir / pending_file.original_filename
+    
+    try:
+        # Download file from S3 to temp directory
+        storage_service.download_file(pending_file.file_key, str(local_file_path))
+        
+        # Use ffprobe to extract metadata
+        try:
+            result = subprocess.run(
+                [
+                    'ffprobe',
+                    '-v', 'quiet',
+                    '-print_format', 'json',
+                    '-show_format',
+                    '-show_streams',
+                    str(local_file_path)
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=300  # 5 minutes max
+            )
+            
+            probe_data = json.loads(result.stdout)
+            
+            # Extract metadata
+            metadata = {
+                'audio_tracks': [],
+                'subtitle_tracks': [],
+                'video_codec': None,
+                'duration': None,
+                'width': None,
+                'height': None,
+            }
+            
+            # Process streams
+            for i, stream in enumerate(probe_data.get('streams', [])):
+                codec_type = stream.get('codec_type', '')
+                
+                if codec_type == 'audio':
+                    # Extract audio track info
+                    track_info = {
+                        'index': i,
+                        'stream_index': stream.get('index', i),
+                        'codec': stream.get('codec_name', ''),
+                        'codec_long': stream.get('codec_long_name', ''),
+                        'language': stream.get('tags', {}).get('language', 'unknown'),
+                        'channels': stream.get('channels', 0),
+                        'sample_rate': stream.get('sample_rate', ''),
+                        'bitrate': stream.get('bit_rate', ''),
+                        'default': stream.get('disposition', {}).get('default', 0) == 1,
+                        'forced': stream.get('disposition', {}).get('forced', 0) == 1,
+                    }
+                    metadata['audio_tracks'].append(track_info)
+                
+                elif codec_type == 'subtitle':
+                    # Extract subtitle track info
+                    track_info = {
+                        'index': i,
+                        'stream_index': stream.get('index', i),
+                        'codec': stream.get('codec_name', ''),
+                        'codec_long': stream.get('codec_long_name', ''),
+                        'language': stream.get('tags', {}).get('language', 'unknown'),
+                        'forced': stream.get('disposition', {}).get('forced', 0) == 1,
+                        'default': stream.get('disposition', {}).get('default', 0) == 1,
+                    }
+                    metadata['subtitle_tracks'].append(track_info)
+                
+                elif codec_type == 'video':
+                    # Extract video info
+                    if metadata['video_codec'] is None:
+                        metadata['video_codec'] = stream.get('codec_name', '')
+                        metadata['width'] = stream.get('width')
+                        metadata['height'] = stream.get('height')
+            
+            # Extract duration from format
+            format_info = probe_data.get('format', {})
+            duration_str = format_info.get('duration')
+            if duration_str:
+                try:
+                    metadata['duration'] = float(duration_str)
+                except (ValueError, TypeError):
+                    pass
+            
+            # Save metadata to PendingFile
+            pending_file.metadata = metadata
+            pending_file.status = 'ready'
+            pending_file.save(update_fields=['metadata', 'status'])
+            
+            add_log(None, 'info', f'File analysis completed for {pending_file.original_filename}')
+            
+        except subprocess.TimeoutExpired:
+            pending_file.status = 'expired'
+            pending_file.save(update_fields=['status'])
+            add_log(None, 'error', f'File analysis timeout for {pending_file.original_filename}')
+        except subprocess.CalledProcessError as e:
+            pending_file.status = 'expired'
+            pending_file.save(update_fields=['status'])
+            add_log(None, 'error', f'File analysis failed for {pending_file.original_filename}: {e}')
+        except json.JSONDecodeError as e:
+            pending_file.status = 'expired'
+            pending_file.save(update_fields=['status'])
+            add_log(None, 'error', f'Failed to parse ffprobe output for {pending_file.original_filename}: {e}')
+        except Exception as e:
+            pending_file.status = 'expired'
+            pending_file.save(update_fields=['status'])
+            add_log(None, 'error', f'Unexpected error during file analysis for {pending_file.original_filename}: {e}')
+        
+    except Exception as e:
+        pending_file.status = 'expired'
+        pending_file.save(update_fields=['status'])
+        add_log(None, 'error', f'Failed to download file for analysis: {e}')
+    finally:
+        # Cleanup temp file
+        try:
+            if local_file_path.exists():
+                local_file_path.unlink()
+            temp_dir.rmdir()
+        except Exception:
+            pass

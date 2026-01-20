@@ -6,12 +6,13 @@ import { Header } from '@/components/Header';
 import { FileUploader } from '@/components/FileUploader';
 import { ConversionOptions } from '@/components/ConversionOptions';
 import { FileList } from '@/components/FileList';
+import { PendingFileItem } from '@/components/PendingFileItem';
 import { ProgressTracker } from '@/components/ProgressTracker';
 import { LoginPrompt } from '@/components/LoginPrompt';
 import { useTranslations } from '@/lib/i18n';
 import { useRequireAuth, useCurrentUser } from '@/hooks/useAuthConfig';
 import { useActiveJobs } from '@/hooks/useConversion';
-import { api } from '@/lib/api';
+import { api, requestUploadUrl, uploadFileDirectly, createJobFromFile, confirmUploadComplete, getFileMetadata } from '@/lib/api';
 import { Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 
 export default function HomePage({ params: { lang } }: { params: { lang: string } }) {
@@ -20,6 +21,14 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
   const { data: localUser } = useCurrentUser();
   const t = useTranslations(lang);
   const [files, setFiles] = useState<File[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<Map<string, {
+    file: File;
+    fileId: string;
+    status: 'uploading' | 'analyzing' | 'ready' | 'error';
+    uploadProgress: number;
+    metadata?: any;
+    error?: string;
+  }>>(new Map());
   const [options, setOptions] = useState({
     container: 'mkv',
     hw_backend: 'auto',
@@ -79,8 +88,135 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
     setActiveJobs((prev) => prev.filter((id) => id !== jobId));
   };
 
-  const handleFilesSelected = (newFiles: File[]) => {
-    setFiles((prev) => [...prev, ...newFiles]);
+  const handleFilesSelected = async (newFiles: File[]) => {
+    // Upload files immediately
+    for (const file of newFiles) {
+      let file_id: string | null = null;
+      try {
+        // Request presigned URL
+        const { file_id: fid, upload_url } = await requestUploadUrl(lang, file.name, file.size);
+        
+        // Ensure file_id is valid before proceeding
+        if (!fid) {
+          throw new Error('Failed to get file ID from server');
+        }
+        
+        // Use fid directly (TypeScript knows it's string after the check)
+        file_id = fid;
+        const fileId = fid; // Create a const to ensure type safety
+        
+        // Create pending file entry
+        const pendingFile = {
+          file,
+          fileId: fileId,
+          status: 'uploading' as const,
+          uploadProgress: 0,
+        };
+        
+        setPendingFiles((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(fileId, pendingFile);
+          return newMap;
+        });
+        
+        // Upload file directly to S3
+        await uploadFileDirectly(upload_url, file, (progress) => {
+          setPendingFiles((prev) => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(fileId);
+            if (existing) {
+              newMap.set(fileId, { ...existing, uploadProgress: progress });
+            }
+            return newMap;
+          });
+        });
+        
+        // Mark upload complete (will trigger analysis)
+        setPendingFiles((prev) => {
+          const newMap = new Map(prev);
+          const existing = newMap.get(fileId);
+          if (existing) {
+            newMap.set(fileId, { ...existing, status: 'analyzing', uploadProgress: 100 });
+          }
+          return newMap;
+        });
+        
+        // Confirm upload and start analysis
+        await confirmUploadComplete(lang, fileId);
+        
+        // Start polling for metadata
+        pollFileMetadata(fileId);
+      } catch (error: any) {
+        console.error('Upload error:', error);
+        if (file_id) {
+          setPendingFiles((prev) => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(file_id!);
+            if (existing) {
+              newMap.set(file_id!, { ...existing, status: 'error', error: error.message });
+            }
+            return newMap;
+          });
+        } else {
+          // If file_id is not available, show error message
+          setUploadError(`Failed to upload ${file.name}: ${error.message}`);
+        }
+      }
+    }
+  };
+
+  const pollFileMetadata = async (fileId: string) => {
+    const maxAttempts = 60; // 5 minutes max
+    let attempts = 0;
+
+    const poll = async () => {
+      try {
+        const { getFileMetadata } = await import('@/lib/api');
+        const result = await getFileMetadata(lang, fileId);
+        
+        if (result.status === 'ready' && result.metadata) {
+          setPendingFiles((prev) => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(fileId);
+            if (existing) {
+              newMap.set(fileId, { ...existing, status: 'ready', metadata: result.metadata });
+            }
+            return newMap;
+          });
+          return;
+        }
+        
+        if (result.status === 'analyzing') {
+          attempts++;
+          if (attempts < maxAttempts) {
+            setTimeout(poll, 5000);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to get metadata:', error);
+      }
+    };
+
+    poll();
+  };
+
+  const handleFileReady = (fileId: string, metadata: any) => {
+    setPendingFiles((prev) => {
+      const newMap = new Map(prev);
+      const existing = newMap.get(fileId);
+      if (existing) {
+        newMap.set(fileId, { ...existing, status: 'ready', metadata });
+      }
+      return newMap;
+    });
+  };
+
+  const handleRemovePendingFile = (fileId: string) => {
+    setPendingFiles((prev) => {
+      const newMap = new Map(prev);
+      newMap.delete(fileId);
+      return newMap;
+    });
   };
 
   const handleRemoveFile = (index: number) => {
@@ -95,7 +231,13 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
       setUploadError('Please log in to start conversion');
       return;
     }
-    if (files.length === 0) return;
+    
+    // Get ready files from pendingFiles
+    const readyFiles = Array.from(pendingFiles.values()).filter(
+      (pf) => pf.status === 'ready'
+    );
+    
+    if (readyFiles.length === 0 && files.length === 0) return;
 
     setIsUploading(true);
     setUploadError('');
@@ -104,6 +246,46 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
     const uploadedJobs: string[] = [];
     let hasError = false;
 
+    // Process ready pending files (new flow)
+    for (const pendingFile of readyFiles) {
+      try {
+        // Use metadata to set default audio/subtitle tracks if not specified
+        const fileOptions = { ...options };
+        
+        if (pendingFile.metadata?.audio_tracks && pendingFile.metadata.audio_tracks.length > 0) {
+          if (!fileOptions.audio_track && !fileOptions.audio_lang) {
+            // Use first track or default track
+            const defaultTrack = pendingFile.metadata.audio_tracks.find((t: any) => t.default) || pendingFile.metadata.audio_tracks[0];
+            if (defaultTrack) {
+              fileOptions.audio_track = defaultTrack.index;
+            }
+          }
+        }
+        
+        if (pendingFile.metadata?.subtitle_tracks && pendingFile.metadata.subtitle_tracks.length > 0) {
+          if (!fileOptions.subtitle_track && !fileOptions.subtitle_lang && !fileOptions.no_subtitles) {
+            // Use first track or default track
+            const defaultTrack = pendingFile.metadata.subtitle_tracks.find((t: any) => t.default) || pendingFile.metadata.subtitle_tracks[0];
+            if (defaultTrack) {
+              fileOptions.subtitle_track = defaultTrack.index;
+            }
+          }
+        }
+        
+        const job = await createJobFromFile(lang, pendingFile.fileId, fileOptions);
+        
+        if (job?.id) {
+          uploadedJobs.push(job.id);
+        }
+      } catch (err: any) {
+        hasError = true;
+        const errorMsg = err.response?.data?.detail || 'Failed to create conversion job';
+        setUploadError(errorMsg);
+        break;
+      }
+    }
+
+    // Process legacy files (fallback)
     for (const file of files) {
       try {
         const formData = new FormData();
@@ -135,7 +317,8 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
 
     if (!hasError && uploadedJobs.length > 0) {
       setActiveJobs((prev) => [...prev, ...uploadedJobs]);
-      setUploadSuccess(`Successfully uploaded ${uploadedJobs.length} file(s)`);
+      setUploadSuccess(`Successfully started ${uploadedJobs.length} conversion(s)`);
+      setPendingFiles(new Map());
       setFiles([]);
       setTimeout(() => setUploadSuccess(''), 3000);
     }
@@ -194,7 +377,27 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
                 />
               </section>
 
-              {/* Files List */}
+              {/* Pending Files List (new upload flow) */}
+              {pendingFiles.size > 0 && (
+                <section className="glass rounded-2xl p-6">
+                  <h2 className="text-xl font-semibold text-white mb-4">
+                    Uploaded Files ({pendingFiles.size})
+                  </h2>
+                  <div className="space-y-3">
+                    {Array.from(pendingFiles.values()).map((pendingFile) => (
+                      <PendingFileItem
+                        key={pendingFile.fileId}
+                        pendingFile={pendingFile}
+                        lang={lang}
+                        onRemove={() => handleRemovePendingFile(pendingFile.fileId)}
+                        onReady={handleFileReady}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Legacy Files List (fallback) */}
               {files.length > 0 && (
                 <section className="glass rounded-2xl p-6">
                   <h2 className="text-xl font-semibold text-white mb-4">
@@ -228,7 +431,7 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
               )}
 
               {/* Start Button */}
-              {files.length > 0 && (
+              {(files.length > 0 || Array.from(pendingFiles.values()).some(pf => pf.status === 'ready')) && (
                 <button
                   onClick={handleStartConversion}
                   disabled={isUploading}
@@ -241,7 +444,7 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
                     </>
                   ) : (
                     <>
-                      {t('convert.start')} ({files.length} {files.length === 1 ? t('files.file') : t('files.files')})
+                      {t('convert.start')} ({files.length + Array.from(pendingFiles.values()).filter(pf => pf.status === 'ready').length} {files.length + Array.from(pendingFiles.values()).filter(pf => pf.status === 'ready').length === 1 ? t('files.file') : t('files.files')})
                     </>
                   )}
                 </button>

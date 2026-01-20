@@ -207,3 +207,10 @@ def enable_auth():
     settings.REQUIRE_AUTH = True
     yield
     settings.REQUIRE_AUTH = old_value
+
+
+@pytest.fixture
+def site_settings(db):
+    """Create or get SiteSettings instance."""
+    from accounts.models import SiteSettings
+    return SiteSettings.get_settings()
