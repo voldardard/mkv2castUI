@@ -28,7 +28,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   
   // OAuth providers
-  const [providers, setProviders] = useState<OAuthProvider[]>([]);
+  const [providers, setProviders] = useState<OAuthProvider[] | Record<string, OAuthProvider> | null>([]);
   const [isLoadingProviders, setIsLoadingProviders] = useState(true);
   
   // 2FA state
@@ -40,7 +40,7 @@ export default function LoginPage() {
   useEffect(() => {
     const fetchProviders = async () => {
       try {
-        const response = await api.get('/api/auth/providers/');
+        const response = await api.get(`/${lang}/api/auth/providers/`);
         setProviders(response.data);
       } catch (err) {
         console.error('Failed to fetch OAuth providers:', err);
@@ -53,8 +53,14 @@ export default function LoginPage() {
     fetchProviders();
   }, []);
 
-  const hasGoogle = providers.some(p => p.id === 'google');
-  const hasGithub = providers.some(p => p.id === 'github');
+  const providerList: OAuthProvider[] = Array.isArray(providers)
+    ? providers
+    : providers && typeof providers === 'object'
+      ? Object.values(providers as Record<string, OAuthProvider>)
+      : [];
+
+  const hasGoogle = providerList.some((p) => p.id === 'google');
+  const hasGithub = providerList.some((p) => p.id === 'github');
   const hasSSO = hasGoogle || hasGithub;
 
   const handleLocalLogin = async (e: React.FormEvent) => {
@@ -63,7 +69,7 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const response = await api.post('/api/auth/login/', {
+      const response = await api.post(`/${lang}/api/auth/login/`, {
         email_or_username: emailOrUsername,
         password,
       });
@@ -89,7 +95,7 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const response = await api.post('/api/auth/login/2fa/', {
+      const response = await api.post(`/${lang}/api/auth/login/2fa/`, {
         email_or_username: emailOrUsername,
         code: totpCode,
         is_backup_code: isBackupCode,

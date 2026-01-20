@@ -303,31 +303,87 @@ class ConfirmUploadView(APIView):
         "status": "analyzing",
         "file_id": "uuid"
     }
+    
+    Error codes:
+    - file_not_found: Pending file record not found in database
+    - invalid_status: File is not in 'uploading' status
+    - file_not_in_storage: File was not found in S3/MinIO storage
+    - user_mismatch: File belongs to a different user
     """
     permission_classes = [IsAuthenticated]
     
     def post(self, request, file_id, **kwargs):
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
-            pending_file = PendingFile.objects.get(id=file_id, user=request.user)
+            pending_file = PendingFile.objects.get(id=file_id)
         except PendingFile.DoesNotExist:
+            logger.warning(f'ConfirmUpload: file_id={file_id} not found')
             return Response(
-                {'detail': 'Pending file not found.'},
+                {
+                    'detail': 'Pending file not found.',
+                    'code': 'file_not_found',
+                    'file_id': str(file_id),
+                },
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        if pending_file.status != 'uploading':
+        # Check user ownership
+        if pending_file.user != request.user:
+            logger.warning(f'ConfirmUpload: user mismatch for file_id={file_id}, owner={pending_file.user.id}, requester={request.user.id}')
             return Response(
-                {'detail': f'File is already in status: {pending_file.status}'},
+                {
+                    'detail': 'File belongs to a different user.',
+                    'code': 'user_mismatch',
+                    'file_id': str(file_id),
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if pending_file.status != 'uploading':
+            logger.info(f'ConfirmUpload: file_id={file_id} already in status={pending_file.status}')
+            return Response(
+                {
+                    'detail': f'File is already in status: {pending_file.status}',
+                    'code': 'invalid_status',
+                    'current_status': pending_file.status,
+                    'file_id': str(file_id),
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         # Verify file exists in S3
+        # Retry file existence check (S3 eventual consistency)
+        # The file may not be immediately visible after PUT operation
         from accounts.storage_service import get_storage_service
+        import time
+        
         storage_service = get_storage_service()
         
-        if not storage_service.file_exists(pending_file.file_key):
+        max_retries = 3
+        file_found = False
+        for attempt in range(max_retries):
+            if storage_service.file_exists(pending_file.file_key):
+                file_found = True
+                if attempt > 0:
+                    logger.info(f'ConfirmUpload: file_id={file_id} found in storage after {attempt + 1} attempts')
+                break
+            if attempt < max_retries - 1:
+                time.sleep(1)  # Wait 1 second before retry
+        
+        if not file_found:
+            logger.error(
+                f'ConfirmUpload: file_id={file_id} still not found in storage after {max_retries} retries '
+                f'at key={pending_file.file_key}'
+            )
             return Response(
-                {'detail': 'File not found in storage. Upload may have failed.'},
+                {
+                    'detail': 'File not found in storage after retries. Upload may have failed.',
+                    'code': 'file_not_in_storage',
+                    'file_id': str(file_id),
+                    'hint': 'The file may not have fully uploaded yet. Please try the upload again.',
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -337,10 +393,12 @@ class ConfirmUploadView(APIView):
         
         # Queue analysis task
         analyze_pending_file.delay(str(pending_file.id))
+        logger.info(f'ConfirmUpload: file_id={file_id} confirmed, analysis queued')
         
         return Response({
             'status': 'analyzing',
             'file_id': str(pending_file.id),
+            'message': 'Upload confirmed. File analysis has started.',
         }, status=status.HTTP_200_OK)
 
 
@@ -361,40 +419,94 @@ class FileMetadataView(APIView):
             ...
         }
     }
-    Status 202 if analyzing, 200 if ready
+    Status 202 if analyzing/uploading, 200 if ready, 400 if error/expired
+    
+    Error codes:
+    - file_not_found: Pending file record not found in database
+    - user_mismatch: File belongs to a different user
+    - analysis_failed: File analysis failed (status=expired)
+    - file_used: File has already been used for a conversion job
     """
     permission_classes = [IsAuthenticated]
     
     def get(self, request, file_id, **kwargs):
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
-            pending_file = PendingFile.objects.get(id=file_id, user=request.user)
+            pending_file = PendingFile.objects.get(id=file_id)
         except PendingFile.DoesNotExist:
+            logger.warning(f'FileMetadata: file_id={file_id} not found')
             return Response(
-                {'detail': 'Pending file not found.'},
+                {
+                    'detail': 'Pending file not found.',
+                    'code': 'file_not_found',
+                    'file_id': str(file_id),
+                },
                 status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check user ownership
+        if pending_file.user != request.user:
+            logger.warning(f'FileMetadata: user mismatch for file_id={file_id}')
+            return Response(
+                {
+                    'detail': 'File belongs to a different user.',
+                    'code': 'user_mismatch',
+                    'file_id': str(file_id),
+                },
+                status=status.HTTP_403_FORBIDDEN
             )
         
         if pending_file.status == 'analyzing':
             return Response({
                 'status': 'analyzing',
                 'message': 'File analysis in progress. Please check again in a moment.',
+                'file_id': str(file_id),
             }, status=status.HTTP_202_ACCEPTED)
         
         if pending_file.status == 'uploading':
             return Response({
                 'status': 'uploading',
                 'message': 'File upload in progress. Please wait for upload to complete.',
+                'file_id': str(file_id),
             }, status=status.HTTP_202_ACCEPTED)
         
+        if pending_file.status == 'expired':
+            return Response({
+                'status': 'error',
+                'code': 'analysis_failed',
+                'message': 'File analysis failed. Please try uploading again.',
+                'file_id': str(file_id),
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if pending_file.status == 'used':
+            return Response({
+                'status': 'used',
+                'code': 'file_used',
+                'message': 'This file has already been used for a conversion job.',
+                'file_id': str(file_id),
+                'metadata': pending_file.metadata,  # Still return metadata for reference
+            }, status=status.HTTP_200_OK)
+        
         if pending_file.status != 'ready':
+            logger.warning(f'FileMetadata: file_id={file_id} in unexpected status={pending_file.status}')
             return Response(
-                {'detail': f'File is not ready. Current status: {pending_file.status}'},
+                {
+                    'detail': f'File is not ready. Current status: {pending_file.status}',
+                    'code': 'invalid_status',
+                    'status': pending_file.status,
+                    'file_id': str(file_id),
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         return Response({
             'status': 'ready',
             'metadata': pending_file.metadata,
+            'file_id': str(file_id),
+            'filename': pending_file.original_filename,
+            'file_size': pending_file.file_size,
         }, status=status.HTTP_200_OK)
 
 
@@ -451,20 +563,53 @@ class CreateJobFromFileView(APIView):
         options_data = serializer.validated_data
         
         # Use metadata from pending_file to set audio/subtitle tracks if available
+        # Map stream_id to ffmpeg_index if needed (for robust stream identification)
         metadata = pending_file.metadata or {}
         if 'audio_tracks' in metadata and metadata['audio_tracks']:
             # Set default audio track if not specified
             if 'audio_track' not in options_data and 'audio_lang' not in options_data:
                 # Use first track or preferred language
+                # Use ffmpeg_index (stable identifier) instead of UI index
                 first_track = metadata['audio_tracks'][0]
-                options_data['audio_track'] = first_track.get('index', 0)
+                options_data['audio_track'] = first_track.get('ffmpeg_index', first_track.get('index', 0))
+            elif 'audio_track' in options_data:
+                # If audio_track is specified, ensure we use ffmpeg_index
+                # Find track by stream_id or fallback to index
+                track_index = options_data['audio_track']
+                # Try to find by stream_id first, then by index
+                matching_track = None
+                for track in metadata['audio_tracks']:
+                    if track.get('stream_id') and str(track_index) in track.get('stream_id', ''):
+                        matching_track = track
+                        break
+                    elif track.get('ffmpeg_index') == track_index or track.get('index') == track_index:
+                        matching_track = track
+                        break
+                if matching_track:
+                    options_data['audio_track'] = matching_track.get('ffmpeg_index', track_index)
         
         if 'subtitle_tracks' in metadata and metadata['subtitle_tracks']:
             # Set default subtitle track if not specified
             if 'subtitle_track' not in options_data and 'subtitle_lang' not in options_data:
                 # Use first track or preferred language
+                # Use ffmpeg_index (stable identifier) instead of UI index
                 first_track = metadata['subtitle_tracks'][0]
-                options_data['subtitle_track'] = first_track.get('index', 0)
+                options_data['subtitle_track'] = first_track.get('ffmpeg_index', first_track.get('index', 0))
+            elif 'subtitle_track' in options_data:
+                # If subtitle_track is specified, ensure we use ffmpeg_index
+                # Find track by stream_id or fallback to index
+                track_index = options_data['subtitle_track']
+                # Try to find by stream_id first, then by index
+                matching_track = None
+                for track in metadata['subtitle_tracks']:
+                    if track.get('stream_id') and str(track_index) in track.get('stream_id', ''):
+                        matching_track = track
+                        break
+                    elif track.get('ffmpeg_index') == track_index or track.get('index') == track_index:
+                        matching_track = track
+                        break
+                if matching_track:
+                    options_data['subtitle_track'] = matching_track.get('ffmpeg_index', track_index)
         
         # Create conversion job
         job = ConversionJob.objects.create(

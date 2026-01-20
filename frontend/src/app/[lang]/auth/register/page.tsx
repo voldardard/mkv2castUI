@@ -105,7 +105,7 @@ export default function RegisterPage() {
     setGeneralError('');
 
     try {
-      const response = await api.post('/api/auth/register/', {
+      const response = await api.post(`/${lang}/api/auth/register/`, {
         email: formData.email,
         username: formData.username,
         password: formData.password,

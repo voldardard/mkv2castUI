@@ -125,7 +125,7 @@ export default function ProfilePage() {
 
     const fetchProfile = async () => {
       try {
-        const response = await api.get('/api/auth/me/');
+        const response = await api.get(`/${lang}/api/auth/me/`);
         const userData = response.data;
         setProfile(userData);
         setProfileForm({
@@ -190,7 +190,7 @@ export default function ProfilePage() {
         formData.append('avatar', avatarFile);
       }
 
-      await api.patch('/api/auth/profile/', formData, {
+      await api.patch(`/${lang}/api/auth/profile/`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -202,7 +202,7 @@ export default function ProfilePage() {
       setAvatarPreview(null);
       
       // Refresh profile data
-      const response = await api.get('/api/auth/me/');
+      const response = await api.get(`/${lang}/api/auth/me/`);
       setProfile(response.data);
       
       setTimeout(() => setSuccess(''), 3000);
@@ -230,7 +230,7 @@ export default function ProfilePage() {
     setSuccess('');
 
     try {
-      await api.post('/api/auth/password/change/', {
+      await api.post(`/${lang}/api/auth/password/change/`, {
         old_password: passwordForm.old_password,
         new_password: passwordForm.new_password,
       });

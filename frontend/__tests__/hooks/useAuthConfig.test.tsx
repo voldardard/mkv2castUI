@@ -4,6 +4,7 @@ import { isAuthRequired, useAuthConfig, useRequireAuth } from '@/hooks/useAuthCo
 
 // Mock the API
 jest.mock('@/lib/api', () => ({
+  getCurrentLang: () => 'en',
   api: {
     get: jest.fn().mockResolvedValue({
       data: {

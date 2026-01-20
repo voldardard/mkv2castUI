@@ -1,4 +1,4 @@
-.PHONY: help release release-push test build clean install
+.PHONY: help release deploy test build clean install
 
 # Version management
 VERSION ?= $(shell grep -E "^__version__" backend/mkv2cast_api/__version__.py | cut -d'"' -f2)
@@ -30,12 +30,17 @@ help: ## Show this help message
 	@echo "Current branch: $(GIT_BRANCH)"
 
 release: ## Prepare a release (update versions, changelog, etc.)
-	@if [ -z "$(VERSION)" ]; then \
-		echo -e "$(RED)Error: VERSION is required$(NC)"; \
-		echo "Usage: make release VERSION=v0.1.0"; \
+	@if [ -z "$(V)" ]; then \
+		echo -e "$(RED)Error: V is required$(NC)"; \
+		echo "Usage: make release V=1.2.1"; \
 		exit 1; \
 	fi
-	@echo -e "$(YELLOW)Preparing release $(VERSION)...$(NC)"
+	@if ! echo "$(V)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$$'; then \
+		echo -e "$(RED)Error: Invalid version format '$(V)'$(NC)"; \
+		echo "Expected: X.Y.Z or X.Y.Z-N (N is a number)"; \
+		exit 1; \
+	fi
+	@echo -e "$(YELLOW)Preparing release $(V)...$(NC)"
 	@echo ""
 	@# Check we're on main branch
 	@if [ "$(GIT_BRANCH)" != "main" ]; then \
@@ -52,51 +57,88 @@ release: ## Prepare a release (update versions, changelog, etc.)
 	fi
 	@# Update backend version
 	@echo -e "$(GREEN)Updating backend version...$(NC)"
-	@sed -i "s/__version__ = \".*\"/__version__ = \"$(VERSION)\"/" $(VERSION_FILE)
+	@sed -i "s/__version__ = \".*\"/__version__ = \"$(V)\"/" $(VERSION_FILE)
 	@# Update frontend version
 	@echo -e "$(GREEN)Updating frontend version...$(NC)"
-	@sed -i 's/"version": ".*"/"version": "$(VERSION)"/' $(FRONTEND_VERSION)
+	@sed -i 's/"version": ".*"/"version": "$(V)"/' $(FRONTEND_VERSION)
 	@# Update README version badge
 	@echo -e "$(GREEN)Updating README...$(NC)"
-	@sed -i 's/BETA SOFTWARE (v.*)/BETA SOFTWARE (v$(VERSION)-beta)/' README.md
+	@sed -i 's/BETA SOFTWARE (v.*)/BETA SOFTWARE (v$(V)-beta)/' README.md
 	@# Show changes
 	@echo ""
-	@echo -e "$(GREEN)Version updated to $(VERSION)$(NC)"
+	@echo -e "$(GREEN)Version updated to $(V)$(NC)"
 	@echo ""
 	@echo -e "$(YELLOW)Files modified:$(NC)"
 	@git status --short
 	@echo ""
 	@echo -e "$(YELLOW)Next steps:$(NC)"
 	@echo "  1. Review the changes: git diff"
-	@echo "  2. Commit: git commit -am 'chore: bump version to $(VERSION)'"
-	@echo "  3. Tag: git tag -a $(GIT_TAG) -m 'Release $(VERSION)'"
-	@echo "  4. Push: git push origin main && git push origin $(GIT_TAG)"
+	@echo "  2. Commit: git commit -am 'chore: release v$(V)'"
+	@echo "  3. Tag: git tag -a v$(V) -m 'Release $(V)'"
+	@echo "  4. Push: git push origin main && git push origin v$(V)"
 	@echo ""
-	@echo "Or use: $(GREEN)make release-push VERSION=$(VERSION)$(NC)"
+	@echo "Or use: $(GREEN)make deploy V=$(V)$(NC)"
 
-release-push: release ## Prepare, commit, tag and push a release
-	@if [ -z "$(VERSION)" ]; then \
-		echo -e "$(RED)Error: VERSION is required$(NC)"; \
-		echo "Usage: make release-push VERSION=v0.1.0"; \
+deploy: ## Format, commit, tag and push a release
+	@if [ -z "$(V)" ]; then \
+		echo -e "$(RED)Error: V is required$(NC)"; \
+		echo "Usage: make deploy V=1.2.1"; \
 		exit 1; \
 	fi
+	@if ! echo "$(V)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$$'; then \
+		echo -e "$(RED)Error: Invalid version format '$(V)'$(NC)"; \
+		echo "Expected: X.Y.Z or X.Y.Z-N (N is a number)"; \
+		exit 1; \
+	fi
+	@if [ "$(GIT_BRANCH)" != "main" ]; then \
+		echo -e "$(RED)Error: Deployments must be made from main branch$(NC)"; \
+		echo "Current branch: $(GIT_BRANCH)"; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo -e "$(RED)Error: Working directory is not clean$(NC)"; \
+		echo "Please commit or stash your changes first"; \
+		git status --short; \
+		exit 1; \
+	fi
+	@echo -e "$(YELLOW)Formatting code...$(NC)"
+	@$(MAKE) format
 	@echo ""
-	@echo -e "$(YELLOW)Committing version changes...$(NC)"
-	@git add $(VERSION_FILE) $(FRONTEND_VERSION) README.md
-	@git commit -m "chore: bump version to $(VERSION)" || true
-	@echo ""
-	@echo -e "$(YELLOW)Creating tag $(GIT_TAG)...$(NC)"
-	@git tag -a $(GIT_TAG) -m "Release $(VERSION)" || (echo -e "$(RED)Tag already exists$(NC)" && exit 1)
-	@echo ""
-	@echo -e "$(YELLOW)Pushing to origin...$(NC)"
-	@echo -e "$(GREEN)This will trigger GitHub Actions workflows$(NC)"
-	@read -p "Continue? [y/N] " -n 1 -r; \
+	@echo -e "$(YELLOW)Committing release...$(NC)"
+	@git add -A
+	@git commit -m "chore: release v$(V)" || echo -e "$(YELLOW)No changes to commit$(NC)"
+	@BASE_VERSION=$$(echo "$(V)" | cut -d- -f1); \
+	POST_SUFFIX=$$(echo "$(V)" | grep -o '\-[0-9]\+$$' || true); \
+	POST_NUM=$$(echo "$$POST_SUFFIX" | cut -c2-); \
+	TAGS=""; \
+	if [ -z "$$POST_SUFFIX" ]; then \
+		TAGS="v$$BASE_VERSION v$$BASE_VERSION-1"; \
+	elif [ "$$POST_NUM" = "1" ]; then \
+		TAGS="v$$BASE_VERSION-1 v$$BASE_VERSION"; \
+	else \
+		TAGS="v$(V)"; \
+	fi; \
+	for tag in $$TAGS; do \
+		if git rev-parse "$$tag" >/dev/null 2>&1; then \
+			echo -e "$(RED)Error: tag '$$tag' already exists$(NC)"; \
+			exit 1; \
+		fi; \
+	done; \
+	for tag in $$TAGS; do \
+		echo -e "$(YELLOW)Creating tag $$tag...$(NC)"; \
+		git tag -a "$$tag" -m "Release $(V)"; \
+	done; \
+	echo ""; \
+	echo -e "$(YELLOW)About to push 'main' and tags: $$TAGS$(NC)"; \
+	read -p "Continue? [y/N] " -n 1 -r; \
 	echo; \
 	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
 		git push origin main; \
-		git push origin $(GIT_TAG); \
+		for tag in $$TAGS; do \
+			git push origin "$$tag"; \
+		done; \
 		echo ""; \
-		echo -e "$(GREEN)Release $(VERSION) pushed!$(NC)"; \
+		echo -e "$(GREEN)Release $(V) deployed!$(NC)"; \
 		echo "Workflows: https://github.com/voldardard/mkv2castUI/actions"; \
 	else \
 		echo -e "$(YELLOW)Cancelled$(NC)"; \

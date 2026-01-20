@@ -9,8 +9,9 @@ from conversions.tasks import (
     build_mkv2cast_config,
     send_progress_update,
     add_log,
+    validate_and_adjust_tracks,
 )
-from conversions.models import ConversionJob, ConversionLog
+from conversions.models import ConversionJob, ConversionLog, PendingFile
 
 
 class TestBuildMkv2castConfig:
@@ -122,6 +123,7 @@ class TestBuildMkv2castConfig:
 # Note: parse_ffmpeg_progress function was removed from tasks.py
 # These tests are kept for reference but are currently disabled
 
+
 class TestSendProgressUpdate:
     """Tests for WebSocket progress updates."""
     
@@ -183,3 +185,235 @@ class TestAddLog:
         log = ConversionLog.objects.filter(job=conversion_job).last()
         assert log.level == 'error'
         assert log.message == 'Error occurred'
+    
+    def test_add_log_with_none_job(self, caplog):
+        """Test that add_log with None job does not create DB logs when job is None."""
+        # Should not raise IntegrityError and should not create ConversionLog entries
+        add_log(None, 'debug', 'Test message for pending file analysis')
+        add_log(None, 'info', 'Info message')
+        add_log(None, 'warning', 'Warning message')
+        add_log(None, 'error', 'Error message')
+        
+        # Verify no ConversionLog was created
+        assert ConversionLog.objects.count() == 0
+
+
+@pytest.mark.django_db
+class TestValidateAndAdjustTracks:
+    """Tests for validate_and_adjust_tracks function."""
+    
+    def test_valid_tracks_unchanged(self, user, db):
+        """Test that valid tracks are not changed."""
+        metadata = {
+            'audio_tracks': [
+                {
+                    'index': 0,
+                    'ffmpeg_index': 0,
+                    'language': 'eng',
+                    'codec': 'aac',
+                    'channels': 2,
+                    'default': True,
+                }
+            ],
+            'subtitle_tracks': [],
+        }
+        
+        pending = PendingFile.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            file_key='upload/test/test.mkv',
+            file_size=1024,
+            status='ready',
+            metadata=metadata,
+        )
+        
+        job = ConversionJob.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            original_file_size=1024,
+            pending_file=pending,
+            audio_track=0,  # Valid track
+        )
+        
+        result = validate_and_adjust_tracks(job)
+        
+        assert result['audio_track'] == 0
+        assert not result['audio_adjusted']
+        assert result['audio_reason'] is None
+    
+    def test_invalid_audio_track_fallback(self, user, db):
+        """Test that invalid audio track falls back to first available track."""
+        metadata = {
+            'audio_tracks': [
+                {
+                    'index': 0,
+                    'ffmpeg_index': 0,
+                    'language': 'fre',
+                    'codec': 'aac',
+                    'channels': 2,
+                    'default': True,
+                },
+                {
+                    'index': 1,
+                    'ffmpeg_index': 1,
+                    'language': 'eng',
+                    'codec': 'aac',
+                    'channels': 2,
+                    'default': False,
+                }
+            ],
+            'subtitle_tracks': [],
+        }
+        
+        pending = PendingFile.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            file_key='upload/test/test.mkv',
+            file_size=1024,
+            status='ready',
+            metadata=metadata,
+        )
+        
+        job = ConversionJob.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            original_file_size=1024,
+            pending_file=pending,
+            audio_track=5,  # Invalid track (doesn't exist)
+        )
+        
+        result = validate_and_adjust_tracks(job)
+        
+        assert result['audio_track'] == 0  # Fallback to first track
+        assert result['audio_adjusted'] is True
+        assert 'not found' in result['audio_reason']
+        assert '5' in result['audio_reason']
+        assert '0' in result['audio_reason']
+    
+    def test_invalid_subtitle_track_fallback(self, user, db):
+        """Test that invalid subtitle track falls back to first available track."""
+        metadata = {
+            'audio_tracks': [],
+            'subtitle_tracks': [
+                {
+                    'index': 0,
+                    'ffmpeg_index': 2,
+                    'language': 'fre',
+                    'codec': 'srt',
+                    'forced': False,
+                    'default': True,
+                }
+            ],
+        }
+        
+        pending = PendingFile.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            file_key='upload/test/test.mkv',
+            file_size=1024,
+            status='ready',
+            metadata=metadata,
+        )
+        
+        job = ConversionJob.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            original_file_size=1024,
+            pending_file=pending,
+            subtitle_track=99,  # Invalid track
+        )
+        
+        result = validate_and_adjust_tracks(job)
+        
+        assert result['subtitle_track'] == 2  # Fallback to first track's ffmpeg_index
+        assert result['subtitle_adjusted'] is True
+        assert 'not found' in result['subtitle_reason']
+    
+    def test_no_metadata_skips_validation(self, user, db):
+        """Test that missing metadata skips validation."""
+        pending = PendingFile.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            file_key='upload/test/test.mkv',
+            file_size=1024,
+            status='ready',
+            metadata={},  # Empty metadata
+        )
+        
+        job = ConversionJob.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            original_file_size=1024,
+            pending_file=pending,
+            audio_track=5,
+        )
+        
+        result = validate_and_adjust_tracks(job)
+        
+        # Should return original values without adjustment
+        assert result['audio_track'] == 5
+        assert not result['audio_adjusted']
+    
+    def test_no_pending_file_skips_validation(self, user, db):
+        """Test that job without pending_file skips validation."""
+        job = ConversionJob.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            original_file_size=1024,
+            pending_file=None,  # No pending file
+            audio_track=3,
+        )
+        
+        result = validate_and_adjust_tracks(job)
+        
+        # Should return original values
+        assert result['audio_track'] == 3
+        assert not result['audio_adjusted']
+    
+    def test_audio_track_fallback_by_language(self, user, db):
+        """Test that fallback prefers tracks matching audio_lang."""
+        metadata = {
+            'audio_tracks': [
+                {
+                    'index': 0,
+                    'ffmpeg_index': 0,
+                    'language': 'eng',
+                    'codec': 'aac',
+                    'channels': 2,
+                    'default': False,
+                },
+                {
+                    'index': 1,
+                    'ffmpeg_index': 1,
+                    'language': 'fre',
+                    'codec': 'aac',
+                    'channels': 2,
+                    'default': True,
+                }
+            ],
+            'subtitle_tracks': [],
+        }
+        
+        pending = PendingFile.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            file_key='upload/test/test.mkv',
+            file_size=1024,
+            status='ready',
+            metadata=metadata,
+        )
+        
+        job = ConversionJob.objects.create(
+            user=user,
+            original_filename='test.mkv',
+            original_file_size=1024,
+            pending_file=pending,
+            audio_track=5,  # Invalid
+            audio_lang='fre',  # Prefer French
+        )
+        
+        result = validate_and_adjust_tracks(job)
+        
+        # Should fallback to French track (ffmpeg_index 1)
+        assert result['audio_track'] == 1
+        assert result['audio_adjusted'] is True

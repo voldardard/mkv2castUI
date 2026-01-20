@@ -9,14 +9,16 @@ router = DefaultRouter()
 router.register(r'jobs', views.ConversionJobViewSet, basename='job')
 
 urlpatterns = [
-    path('', include(router.urls)),
+    # Specific job creation route MUST come before router to avoid conflicts
+    path('jobs/create-from-file/', views.CreateJobFromFileView.as_view(), name='create-job-from-file'),
     path('upload/presigned/', views.PresignedUploadView.as_view(), name='presigned-upload'),
     path('upload/<uuid:file_id>/complete/', views.ConfirmUploadView.as_view(), name='confirm-upload'),
     path('upload/<uuid:file_id>/metadata/', views.FileMetadataView.as_view(), name='file-metadata'),
     path('upload/', views.FileUploadView.as_view(), name='file-upload'),  # Legacy fallback
-    path('jobs/create-from-file/', views.CreateJobFromFileView.as_view(), name='create-job-from-file'),
     path('options/', views.conversion_options, name='conversion-options'),
     path('stats/', views.user_stats, name='user-stats'),
+    # DRF router for /jobs/ and /jobs/{pk}/
+    path('', include(router.urls)),
     # Add download route with filename in URL for better browser compatibility
     # This allows URLs like /api/jobs/{id}/download/filename.mkv
     # The filename is optional and validated in the view

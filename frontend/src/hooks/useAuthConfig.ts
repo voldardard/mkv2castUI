@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, getCurrentLang } from '@/lib/api';
 
 export interface AuthConfig {
   require_auth: boolean;
@@ -37,7 +37,8 @@ export function useAuthConfig() {
   return useQuery<AuthConfig>({
     queryKey: ['auth-config'],
     queryFn: async () => {
-      const response = await api.get<AuthConfig>('/api/auth/config/');
+      const lang = getCurrentLang();
+      const response = await api.get<AuthConfig>(`/${lang}/api/auth/config/`);
       return response.data;
     },
     staleTime: Infinity,
@@ -84,7 +85,8 @@ export function useCurrentUser() {
       if (!token) return null;
       
       try {
-        const response = await api.get('/api/auth/me/', {
+        const lang = getCurrentLang();
+        const response = await api.get(`/${lang}/api/auth/me/`, {
           headers: { Authorization: `Token ${token}` }
         });
         return response.data;

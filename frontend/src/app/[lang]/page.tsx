@@ -12,7 +12,7 @@ import { LoginPrompt } from '@/components/LoginPrompt';
 import { useTranslations } from '@/lib/i18n';
 import { useRequireAuth, useCurrentUser } from '@/hooks/useAuthConfig';
 import { useActiveJobs } from '@/hooks/useConversion';
-import { api, requestUploadUrl, uploadFileDirectly, createJobFromFile, confirmUploadComplete, getFileMetadata } from '@/lib/api';
+import { api, requestUploadUrl, uploadFileDirectly, createJobFromFile, confirmUploadComplete, getFileMetadata, analyzeFileLocally } from '@/lib/api';
 import { Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 
 export default function HomePage({ params: { lang } }: { params: { lang: string } }) {
@@ -89,47 +89,123 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
   };
 
   const handleFilesSelected = async (newFiles: File[]) => {
-    // Upload files immediately
+    // Upload files immediately - process each file in parallel
     for (const file of newFiles) {
-      let file_id: string | null = null;
-      try {
-        // Request presigned URL
-        const { file_id: fid, upload_url } = await requestUploadUrl(lang, file.name, file.size);
-        
-        // Ensure file_id is valid before proceeding
-        if (!fid) {
-          throw new Error('Failed to get file ID from server');
-        }
-        
-        // Use fid directly (TypeScript knows it's string after the check)
-        file_id = fid;
-        const fileId = fid; // Create a const to ensure type safety
-        
-        // Create pending file entry
-        const pendingFile = {
+      // Generate a temporary ID for the file card (will be replaced by server file_id)
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      let fileId: string = tempId;
+      
+      // Create pending file entry IMMEDIATELY (before any async operations)
+      // This ensures the card is always visible, even if later steps fail
+      setPendingFiles((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(tempId, {
           file,
-          fileId: fileId,
+          fileId: tempId,
           status: 'uploading' as const,
           uploadProgress: 0,
-        };
+          metadata: undefined,
+        });
+        return newMap;
+      });
+      
+      try {
+        // Pre-analyze file locally for immediate metadata display (non-blocking)
+        // analyzeFileLocally NEVER throws - it always returns a valid object
+        const preliminaryMetadata = await analyzeFileLocally(file);
         
+        // Update pending file with preliminary metadata
         setPendingFiles((prev) => {
           const newMap = new Map(prev);
-          newMap.set(fileId, pendingFile);
+          const existing = newMap.get(tempId);
+          if (existing) {
+            newMap.set(tempId, { ...existing, metadata: preliminaryMetadata });
+          }
+          return newMap;
+        });
+        
+        // Request presigned URL from server
+        let uploadData;
+        try {
+          uploadData = await requestUploadUrl(lang, file.name, file.size);
+        } catch (error: any) {
+          console.error('[upload] Failed to get presigned URL:', error);
+          setPendingFiles((prev) => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(tempId);
+            if (existing) {
+              newMap.set(tempId, { 
+                ...existing, 
+                status: 'error', 
+                error: error.response?.data?.detail || error.message || 'Failed to prepare upload'
+              });
+            }
+            return newMap;
+          });
+          continue; // Move to next file
+        }
+        
+        const { file_id: fid, upload_url } = uploadData;
+        
+        // Ensure file_id is valid before proceeding
+        if (!fid || !upload_url) {
+          console.error('[upload] Invalid response from server:', uploadData);
+          setPendingFiles((prev) => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(tempId);
+            if (existing) {
+              newMap.set(tempId, { 
+                ...existing, 
+                status: 'error', 
+                error: 'Invalid response from server'
+              });
+            }
+            return newMap;
+          });
+          continue; // Move to next file
+        }
+        
+        // Update the entry with the real file ID from server
+        fileId = fid;
+        setPendingFiles((prev) => {
+          const newMap = new Map(prev);
+          const existing = newMap.get(tempId);
+          if (existing) {
+            // Remove temp entry and add with real ID
+            newMap.delete(tempId);
+            newMap.set(fileId, { ...existing, fileId });
+          }
           return newMap;
         });
         
         // Upload file directly to S3
-        await uploadFileDirectly(upload_url, file, (progress) => {
+        try {
+          await uploadFileDirectly(upload_url, file, (progress) => {
+            setPendingFiles((prev) => {
+              const newMap = new Map(prev);
+              const existing = newMap.get(fileId);
+              if (existing) {
+                newMap.set(fileId, { ...existing, uploadProgress: progress });
+              }
+              return newMap;
+            });
+          });
+        } catch (error: any) {
+          console.error('[upload] Failed to upload to S3:', error);
           setPendingFiles((prev) => {
             const newMap = new Map(prev);
             const existing = newMap.get(fileId);
             if (existing) {
-              newMap.set(fileId, { ...existing, uploadProgress: progress });
+              newMap.set(fileId, { 
+                ...existing, 
+                status: 'error', 
+                error: error.message || 'Upload to storage failed'
+              });
             }
             return newMap;
           });
-        });
+          continue; // Move to next file
+        }
         
         // Mark upload complete (will trigger analysis)
         setPendingFiles((prev) => {
@@ -141,59 +217,146 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
           return newMap;
         });
         
-        // Confirm upload and start analysis
-        await confirmUploadComplete(lang, fileId);
-        
-        // Start polling for metadata
-        pollFileMetadata(fileId);
-      } catch (error: any) {
-        console.error('Upload error:', error);
-        if (file_id) {
+        // Confirm upload and start server-side analysis
+        try {
+          await confirmUploadComplete(lang, fileId);
+        } catch (error: any) {
+          console.error('[upload] Failed to confirm upload:', error);
+          const errorMsg = error.response?.data?.detail || error.message || 'Failed to confirm upload';
           setPendingFiles((prev) => {
             const newMap = new Map(prev);
-            const existing = newMap.get(file_id!);
+            const existing = newMap.get(fileId);
             if (existing) {
-              newMap.set(file_id!, { ...existing, status: 'error', error: error.message });
+              newMap.set(fileId, { 
+                ...existing, 
+                status: 'error', 
+                error: errorMsg
+              });
             }
             return newMap;
           });
-        } else {
-          // If file_id is not available, show error message
-          setUploadError(`Failed to upload ${file.name}: ${error.message}`);
+          continue; // Move to next file
         }
+        
+        // Start polling for metadata (WebSocket will also update)
+        pollFileMetadata(fileId);
+        
+      } catch (error: any) {
+        // Catch-all for any unexpected errors
+        console.error('[upload] Unexpected error:', error);
+        const currentId = fileId !== tempId ? fileId : tempId;
+        setPendingFiles((prev) => {
+          const newMap = new Map(prev);
+          const existing = newMap.get(currentId);
+          if (existing) {
+            newMap.set(currentId, { 
+              ...existing, 
+              status: 'error', 
+              error: error.message || 'An unexpected error occurred'
+            });
+          }
+          return newMap;
+        });
       }
     }
   };
 
   const pollFileMetadata = async (fileId: string) => {
-    const maxAttempts = 60; // 5 minutes max
+    const maxAttempts = 60; // 5 minutes max (5s intervals)
+    const retryDelay = 5000;
     let attempts = 0;
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 3;
 
     const poll = async () => {
       try {
         const { getFileMetadata } = await import('@/lib/api');
         const result = await getFileMetadata(lang, fileId);
+        consecutiveErrors = 0; // Reset error counter on success
         
         if (result.status === 'ready' && result.metadata) {
+          // Server analysis complete - update with server metadata (source of truth)
           setPendingFiles((prev) => {
             const newMap = new Map(prev);
             const existing = newMap.get(fileId);
             if (existing) {
-              newMap.set(fileId, { ...existing, status: 'ready', metadata: result.metadata });
+              newMap.set(fileId, { 
+                ...existing, 
+                status: 'ready', 
+                metadata: result.metadata // Server metadata replaces preliminary
+              });
             }
             return newMap;
           });
           return;
         }
         
-        if (result.status === 'analyzing') {
+        if (result.status === 'analyzing' || result.status === 'uploading') {
           attempts++;
           if (attempts < maxAttempts) {
-            setTimeout(poll, 5000);
+            setTimeout(poll, retryDelay);
+          } else {
+            // Timeout - file analysis took too long
+            console.warn(`[pollFileMetadata] Timeout waiting for file ${fileId} analysis`);
+            setPendingFiles((prev) => {
+              const newMap = new Map(prev);
+              const existing = newMap.get(fileId);
+              if (existing && existing.status === 'analyzing') {
+                newMap.set(fileId, { 
+                  ...existing, 
+                  status: 'error', 
+                  error: 'Analysis timeout. Please try again.'
+                });
+              }
+              return newMap;
+            });
           }
+          return;
         }
-      } catch (error) {
-        console.error('Failed to get metadata:', error);
+        
+        // Handle error status from server
+        if (result.status === 'error' || result.status === 'expired') {
+          setPendingFiles((prev) => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(fileId);
+            if (existing) {
+              newMap.set(fileId, { 
+                ...existing, 
+                status: 'error', 
+                error: result.message || 'File analysis failed'
+              });
+            }
+            return newMap;
+          });
+        }
+      } catch (error: any) {
+        consecutiveErrors++;
+        console.error(`[pollFileMetadata] Error (attempt ${attempts + 1}, consecutive errors: ${consecutiveErrors}):`, error);
+        
+        // Only mark as error after multiple consecutive failures
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          const errorMsg = error.response?.data?.detail || error.message || 'Failed to get file metadata';
+          setPendingFiles((prev) => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(fileId);
+            if (existing && existing.status === 'analyzing') {
+              newMap.set(fileId, { 
+                ...existing, 
+                status: 'error', 
+                error: errorMsg
+              });
+            }
+            return newMap;
+          });
+          return;
+        }
+        
+        // Retry with exponential backoff on transient errors
+        attempts++;
+        if (attempts < maxAttempts) {
+          const backoffDelay = Math.min(retryDelay * Math.pow(1.5, consecutiveErrors), 30000);
+          setTimeout(poll, backoffDelay);
+        }
       }
     };
 
@@ -431,7 +594,10 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
               )}
 
               {/* Start Button */}
-              {(files.length > 0 || Array.from(pendingFiles.values()).some(pf => pf.status === 'ready')) && (
+              {(files.length > 0 ||
+                (pendingFiles &&
+                  pendingFiles instanceof Map &&
+                  Array.from(pendingFiles.values()).some((pf) => pf.status === 'ready'))) && (
                 <button
                   onClick={handleStartConversion}
                   disabled={isUploading}
@@ -442,9 +608,20 @@ export default function HomePage({ params: { lang } }: { params: { lang: string 
                       <Loader2 className="w-5 h-5 animate-spin" />
                       Uploading...
                     </>
+                  ) : pendingFiles && pendingFiles instanceof Map ? (
+                    <>
+                      {t('convert.start')} (
+                        {files.length +
+                          Array.from(pendingFiles.values()).filter((pf) => pf.status === 'ready').length}{' '}
+                        {files.length +
+                          Array.from(pendingFiles.values()).filter((pf) => pf.status === 'ready').length === 1
+                          ? t('files.file')
+                          : t('files.files')}
+                      )
+                    </>
                   ) : (
                     <>
-                      {t('convert.start')} ({files.length + Array.from(pendingFiles.values()).filter(pf => pf.status === 'ready').length} {files.length + Array.from(pendingFiles.values()).filter(pf => pf.status === 'ready').length === 1 ? t('files.file') : t('files.files')})
+                      {t('convert.start')} ({files.length} {files.length === 1 ? t('files.file') : t('files.files')})
                     </>
                   )}
                 </button>

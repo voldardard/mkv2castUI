@@ -5,29 +5,49 @@ import { X, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { getFileMetadata, confirmUploadComplete } from '@/lib/api';
 import { useWebSocket } from '@/hooks';
 
+/**
+ * Metadata structure that can come from either:
+ * - Local analysis (preliminary, via analyzeFileLocally)
+ * - Server analysis (authoritative, via ffprobe)
+ * 
+ * Server metadata includes additional fields (ffmpeg_index, stream_id)
+ * that are used for track selection in conversion.
+ */
+interface FileMetadata {
+  audio_tracks?: Array<{
+    index?: number;
+    ffmpeg_index?: number;
+    language: string;
+    title?: string;
+    codec: string;
+    channels: number;
+    default?: boolean;
+    forced?: boolean;
+    stream_id?: string;
+  }>;
+  subtitle_tracks?: Array<{
+    index?: number;
+    ffmpeg_index?: number;
+    language: string;
+    title?: string;
+    codec: string;
+    forced?: boolean;
+    default?: boolean;
+    hearing_impaired?: boolean;
+    stream_id?: string;
+  }>;
+  video_codec?: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+}
+
 interface PendingFileData {
   file: File;
   fileId: string;
   status: 'uploading' | 'analyzing' | 'ready' | 'error';
   uploadProgress: number;
-  metadata?: {
-    audio_tracks?: Array<{
-      index: number;
-      language: string;
-      codec: string;
-      channels: number;
-      default: boolean;
-    }>;
-    subtitle_tracks?: Array<{
-      index: number;
-      language: string;
-      codec: string;
-      forced: boolean;
-      default: boolean;
-    }>;
-    video_codec?: string;
-    duration?: number;
-  };
+  metadata?: FileMetadata;
   error?: string;
 }
 
@@ -202,6 +222,45 @@ export function PendingFileItem({ pendingFile, lang, onRemove, onReady }: Pendin
               style={{ width: `${pendingFile.uploadProgress}%` }}
             />
           </div>
+          
+          {/* Show preliminary metadata during upload */}
+          {pendingFile.metadata && (
+            <div className="text-xs text-surface-400 space-y-1 mt-2 pt-2 border-t border-surface-800">
+              {pendingFile.metadata.duration && (
+                <div>
+                  <span className="text-surface-500">Duration:</span>{' '}
+                  <span className="text-surface-300">{formatDuration(pendingFile.metadata.duration)}</span>
+                </div>
+              )}
+              {(pendingFile.metadata.width || pendingFile.metadata.height) && (
+                <div>
+                  <span className="text-surface-500">Resolution:</span>{' '}
+                  <span className="text-surface-300">
+                    {pendingFile.metadata.width}x{pendingFile.metadata.height}
+                  </span>
+                </div>
+              )}
+              {pendingFile.metadata.audio_tracks && pendingFile.metadata.audio_tracks.length > 0 && (
+                <div>
+                  <span className="text-surface-500">Audio:</span>{' '}
+                  <span className="text-surface-300">
+                    {pendingFile.metadata.audio_tracks.length} track{pendingFile.metadata.audio_tracks.length > 1 ? 's' : ''}
+                  </span>
+                </div>
+              )}
+              {pendingFile.metadata.subtitle_tracks && pendingFile.metadata.subtitle_tracks.length > 0 && (
+                <div>
+                  <span className="text-surface-500">Subtitles:</span>{' '}
+                  <span className="text-surface-300">
+                    {pendingFile.metadata.subtitle_tracks.length} track{pendingFile.metadata.subtitle_tracks.length > 1 ? 's' : ''}
+                  </span>
+                </div>
+              )}
+              <div className="text-surface-500 italic text-xs mt-1">
+                (Full analysis in progress...)
+              </div>
+            </div>
+          )}
         </div>
       )}
 

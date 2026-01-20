@@ -308,6 +308,18 @@ export async function downloadFile(lang: string, jobId: string, filename: string
 }
 
 /**
+ * Infer the current language from the URL (client-side only).
+ * Falls back to 'en' if not on the browser or if the segment is unknown.
+ */
+export function getCurrentLang(): string {
+  if (typeof window === 'undefined') return 'en';
+  const segments = window.location.pathname.split('/').filter(Boolean);
+  const first = segments[0];
+  const supported = ['en', 'fr', 'de', 'it', 'es'];
+  return supported.includes(first) ? first : 'en';
+}
+
+/**
  * Get active jobs (pending, queued, analyzing, processing)
  */
 export async function getActiveJobs(lang: string): Promise<string[]> {
@@ -317,3 +329,9 @@ export async function getActiveJobs(lang: string): Promise<string[]> {
     .filter((job: any) => ['pending', 'queued', 'analyzing', 'processing'].includes(job.status))
     .map((job: any) => job.id);
 }
+
+/**
+ * Analyze file locally using browser APIs and ffprobe.wasm
+ * Returns preliminary metadata for immediate display
+ */
+export { analyzeFileLocally, type LocalMediaMetadata } from './mediaAnalysis';

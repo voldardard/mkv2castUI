@@ -51,6 +51,23 @@ class MockWebSocket {
 
 global.WebSocket = MockWebSocket as any;
 
+// Mock @ffmpeg/ffmpeg
+jest.mock('@ffmpeg/ffmpeg', () => ({
+  FFmpeg: jest.fn().mockImplementation(() => ({
+    load: jest.fn().mockResolvedValue(undefined),
+    writeFile: jest.fn().mockResolvedValue(undefined),
+    deleteFile: jest.fn().mockResolvedValue(undefined),
+    exec: jest.fn().mockResolvedValue(undefined),
+    on: jest.fn(),
+  })),
+}));
+
+// Mock @ffmpeg/util
+jest.mock('@ffmpeg/util', () => ({
+  fetchFile: jest.fn().mockResolvedValue(new Uint8Array()),
+  toBlobURL: jest.fn().mockResolvedValue('blob:mock-url'),
+}));
+
 // Mock environment variables
 process.env.NEXT_PUBLIC_REQUIRE_AUTH = 'false';
 process.env.NEXT_PUBLIC_API_URL = '/api';

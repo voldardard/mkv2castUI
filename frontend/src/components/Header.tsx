@@ -69,7 +69,7 @@ export function Header({ lang }: HeaderProps) {
 
     const fetchUserProfile = async () => {
       try {
-        const response = await api.get('/api/auth/me/');
+        const response = await api.get(`/${lang}/api/auth/me/`);
         setUserProfile(response.data);
       } catch (err) {
         // Silently fail - user might not be authenticated

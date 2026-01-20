@@ -62,7 +62,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         
         // Try to get user info - the api interceptor adds the token automatically
         // For SSO users, the backend should recognize them via session cookie
-        const response = await api.get('/api/auth/me/');
+        const response = await api.get(`/${lang}/api/auth/me/`);
         const user = response.data;
         
         if (!user.is_admin) {

@@ -58,7 +58,7 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def current_user(request):
+def current_user(request, *args, **kwargs):
     """
     Get the current authenticated user's information.
     """
@@ -72,7 +72,7 @@ def current_user(request):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
-def oauth_providers(request):
+def oauth_providers(request, *args, **kwargs):
     """
     Get available OAuth providers based on configuration.
     Only returns providers that have their client IDs configured.
@@ -124,7 +124,7 @@ def oauth_providers(request):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
-def auth_config(request):
+def auth_config(request, *args, **kwargs):
     """
     Get authentication configuration.
     
@@ -169,7 +169,7 @@ class RegisterView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [RegistrationRateThrottle]
     
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         # Check if registration is allowed
         site_settings = SiteSettings.get_settings()
         if not site_settings.allow_registration:
@@ -201,7 +201,7 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [LoginRateThrottle]
     
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         throttle = LoginRateThrottle()
         
         # Check user-specific throttle using email_or_username
@@ -262,7 +262,7 @@ class TwoFactorLoginView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [LoginRateThrottle]
     
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         serializer = TwoFactorLoginSerializer(data=request.data)
         
         if serializer.is_valid():
@@ -296,7 +296,7 @@ class TwoFactorLoginView(APIView):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def logout_view(request):
+def logout_view(request, *args, **kwargs):
     """
     Logout the current user by deleting their auth token.
     """
@@ -317,7 +317,7 @@ class TOTPSetupView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         user = request.user
         
         if user.totp_enabled:
@@ -345,7 +345,7 @@ class TOTPVerifyView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         serializer = TOTPVerifySerializer(data=request.data)
         
         if serializer.is_valid():
@@ -376,7 +376,7 @@ class TOTPDisableView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         serializer = TOTPDisableSerializer(
             data=request.data,
             context={'user': request.user}
@@ -399,7 +399,7 @@ class TOTPBackupCodesView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         user = request.user
         
         if not user.totp_enabled:
@@ -427,7 +427,7 @@ class PasswordChangeView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         serializer = PasswordChangeSerializer(
             data=request.data,
             context={'user': request.user}
@@ -458,7 +458,7 @@ class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [PasswordResetRateThrottle]
     
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         throttle = PasswordResetRateThrottle()
         
         serializer = PasswordResetRequestSerializer(data=request.data)
@@ -500,7 +500,7 @@ class PasswordResetConfirmView(APIView):
     """
     permission_classes = [AllowAny]
     
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         serializer = PasswordResetConfirmSerializer(data=request.data)
         
         if serializer.is_valid():
@@ -519,7 +519,7 @@ class PasswordResetConfirmView(APIView):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
-def public_site_settings(request):
+def public_site_settings(request, *args, **kwargs):
     """
     Get public site settings (branding, maintenance mode).
     """

@@ -174,8 +174,29 @@ def send_pending_file_update(
     )
 
 
-def add_log(job: ConversionJob, level: str, message: str):
-    """Add a log entry for the job."""
+def add_log(job: ConversionJob | None, level: str, message: str):
+    """
+    Add a log entry for the job.
+    
+    If job is None (e.g. during PendingFile analysis before job creation),
+    fallback to standard Python logging instead of writing to ConversionLog
+    (since ConversionLog.job_id is NOT NULL).
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if job is None:
+        # Fallback: log via standard logger only (for PendingFile analysis logs)
+        if level == 'debug':
+            logger.debug(message)
+        elif level == 'info':
+            logger.info(message)
+        elif level == 'warning':
+            logger.warning(message)
+        else:
+            logger.error(message)
+        return
+    
     ConversionLog.objects.create(job=job, level=level, message=message)
 
 
@@ -249,7 +270,125 @@ def create_progress_callback(job_id: str, job: ConversionJob):
     return on_progress
 
 
-def build_mkv2cast_config(job: ConversionJob) -> 'Config':
+def validate_and_adjust_tracks(job: ConversionJob) -> dict:
+    """
+    Validate that the requested audio/subtitle tracks exist in the file metadata.
+    If a track doesn't exist, fallback to the nearest valid track and log the adjustment.
+    
+    Returns a dict with validated/adjusted track settings:
+    {
+        'audio_track': int or None,
+        'subtitle_track': int or None,
+        'audio_adjusted': bool,
+        'subtitle_adjusted': bool,
+        'audio_reason': str or None,
+        'subtitle_reason': str or None,
+    }
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    result = {
+        'audio_track': job.audio_track,
+        'subtitle_track': job.subtitle_track,
+        'audio_adjusted': False,
+        'subtitle_adjusted': False,
+        'audio_reason': None,
+        'subtitle_reason': None,
+    }
+    
+    # Get metadata from pending_file if available
+    metadata = None
+    if job.pending_file and job.pending_file.metadata:
+        metadata = job.pending_file.metadata
+    
+    if not metadata:
+        logger.debug(f'[Job {job.id}] No pending_file metadata, skipping track validation')
+        return result
+    
+    audio_tracks = metadata.get('audio_tracks', [])
+    subtitle_tracks = metadata.get('subtitle_tracks', [])
+    
+    # Build index sets for quick lookup (using ffmpeg_index as source of truth)
+    audio_indices = {t.get('ffmpeg_index', t.get('index')) for t in audio_tracks}
+    subtitle_indices = {t.get('ffmpeg_index', t.get('index')) for t in subtitle_tracks}
+    
+    # Validate audio track
+    if job.audio_track is not None and audio_tracks:
+        if job.audio_track not in audio_indices:
+            # Track doesn't exist - find fallback
+            old_track = job.audio_track
+            
+            # Try to find track with same language preference
+            fallback_track = None
+            if job.audio_lang:
+                for lang in job.audio_lang.split(','):
+                    lang = lang.strip()
+                    for t in audio_tracks:
+                        if t.get('language', '').lower().startswith(lang.lower()):
+                            fallback_track = t.get('ffmpeg_index', t.get('index'))
+                            break
+                    if fallback_track is not None:
+                        break
+            
+            # If no language match, use first track (or default track)
+            if fallback_track is None and audio_tracks:
+                default_track = next((t for t in audio_tracks if t.get('default')), None)
+                if default_track:
+                    fallback_track = default_track.get('ffmpeg_index', default_track.get('index'))
+                else:
+                    fallback_track = audio_tracks[0].get('ffmpeg_index', audio_tracks[0].get('index'))
+            
+            result['audio_track'] = fallback_track
+            result['audio_adjusted'] = True
+            result['audio_reason'] = f'Audio track {old_track} not found, using track {fallback_track}'
+            logger.warning(f'[Job {job.id}] {result["audio_reason"]}. Available: {list(audio_indices)}')
+    
+    # Validate subtitle track
+    if job.subtitle_track is not None and not job.no_subtitles:
+        if subtitle_tracks and job.subtitle_track not in subtitle_indices:
+            # Track doesn't exist - find fallback
+            old_track = job.subtitle_track
+            
+            # Try to find track with same language preference
+            fallback_track = None
+            if job.subtitle_lang:
+                for lang in job.subtitle_lang.split(','):
+                    lang = lang.strip()
+                    for t in subtitle_tracks:
+                        if t.get('language', '').lower().startswith(lang.lower()):
+                            # Prefer forced subs if enabled
+                            if job.prefer_forced_subs and t.get('forced'):
+                                fallback_track = t.get('ffmpeg_index', t.get('index'))
+                                break
+                            elif fallback_track is None:
+                                fallback_track = t.get('ffmpeg_index', t.get('index'))
+                    if fallback_track is not None and (not job.prefer_forced_subs or any(t.get('forced') for t in subtitle_tracks if t.get('language', '').lower().startswith(lang.lower()))):
+                        break
+            
+            # If no language match, use first track (or default track)
+            if fallback_track is None and subtitle_tracks:
+                default_track = next((t for t in subtitle_tracks if t.get('default')), None)
+                if default_track:
+                    fallback_track = default_track.get('ffmpeg_index', default_track.get('index'))
+                else:
+                    fallback_track = subtitle_tracks[0].get('ffmpeg_index', subtitle_tracks[0].get('index'))
+            
+            result['subtitle_track'] = fallback_track
+            result['subtitle_adjusted'] = True
+            result['subtitle_reason'] = f'Subtitle track {old_track} not found, using track {fallback_track}'
+            logger.warning(f'[Job {job.id}] {result["subtitle_reason"]}. Available: {list(subtitle_indices)}')
+        elif not subtitle_tracks and job.subtitle_track is not None:
+            # No subtitle tracks in file
+            result['subtitle_track'] = None
+            result['subtitle_adjusted'] = True
+            result['subtitle_reason'] = 'No subtitle tracks found in file'
+            logger.info(f'[Job {job.id}] {result["subtitle_reason"]}')
+    
+    return result
+
+
+def build_mkv2cast_config(job: ConversionJob, validated_tracks: dict = None) -> 'Config':
     """
     Build mkv2cast Config object from job settings.
     
@@ -257,7 +396,14 @@ def build_mkv2cast_config(job: ConversionJob) -> 'Config':
     - Progress bars (we use our own via callback)
     - Desktop notifications (we use WebSocket)
     - Rich UI (not needed in Celery worker)
+    
+    Args:
+        job: The ConversionJob instance
+        validated_tracks: Optional dict from validate_and_adjust_tracks() with corrected track indices
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Build config kwargs
     config_kwargs = {
         'hw': job.hw_backend,
@@ -281,18 +427,26 @@ def build_mkv2cast_config(job: ConversionJob) -> 'Config':
         'deep_check': job.deep_check,
     }
     
+    # Use validated tracks if provided, otherwise use job values
+    audio_track = validated_tracks.get('audio_track') if validated_tracks else job.audio_track
+    subtitle_track = validated_tracks.get('subtitle_track') if validated_tracks else job.subtitle_track
+    
     # Add audio/subtitle selection if specified
     if job.audio_lang:
         config_kwargs['audio_lang'] = job.audio_lang
-    if job.audio_track is not None:
-        config_kwargs['audio_track'] = job.audio_track
+    if audio_track is not None:
+        config_kwargs['audio_track'] = audio_track
     if job.subtitle_lang:
         config_kwargs['subtitle_lang'] = job.subtitle_lang
-    if job.subtitle_track is not None:
-        config_kwargs['subtitle_track'] = job.subtitle_track
+    if subtitle_track is not None:
+        config_kwargs['subtitle_track'] = subtitle_track
     
     config_kwargs['prefer_forced_subs'] = job.prefer_forced_subs
     config_kwargs['no_subtitles'] = job.no_subtitles
+    
+    # Log final track configuration for debugging
+    logger.debug(f'[Job {job.id}] mkv2cast config: audio_track={audio_track}, subtitle_track={subtitle_track}, '
+                 f'audio_lang={job.audio_lang}, subtitle_lang={job.subtitle_lang}')
     
     # AMD AMF quality (if backend is amf)
     if job.hw_backend == 'amf':
@@ -396,8 +550,17 @@ def run_conversion(self, job_id: str):
         output_dir = temp_dir / 'output'
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Build mkv2cast configuration
-        config = build_mkv2cast_config(job)
+        # Validate and adjust tracks before building config
+        # This ensures selected tracks exist in the file and logs any adjustments
+        validated_tracks = validate_and_adjust_tracks(job)
+        
+        if validated_tracks.get('audio_adjusted'):
+            add_log(job, 'warning', validated_tracks['audio_reason'])
+        if validated_tracks.get('subtitle_adjusted'):
+            add_log(job, 'warning', validated_tracks['subtitle_reason'])
+        
+        # Build mkv2cast configuration with validated tracks
+        config = build_mkv2cast_config(job, validated_tracks)
         
         # Analyze the file using mkv2cast's decide_for()
         add_log(job, 'debug', f'Analyzing file with mkv2cast: {input_path}')
@@ -761,33 +924,55 @@ def analyze_pending_file(self, file_id: str):
         # Process streams
         for i, stream in enumerate(probe_data.get('streams', [])):
             codec_type = stream.get('codec_type', '')
+            stream_tags = stream.get('tags', {})
+            disposition = stream.get('disposition', {})
+            ffmpeg_index = stream.get('index', i)
+            
+            # Extract language and title from tags (filter stream_tags as requested)
+            language = stream_tags.get('language', 'unknown')
+            title = stream_tags.get('title', '')
+            
+            # Build disposition string for stream_id
+            disposition_parts = []
+            if disposition.get('default', 0) == 1:
+                disposition_parts.append('default')
+            if disposition.get('forced', 0) == 1:
+                disposition_parts.append('forced')
+            disposition_str = ':'.join(disposition_parts) if disposition_parts else 'none'
             
             if codec_type == 'audio':
-                # Extract audio track info
+                # Normalized audio track format
+                # stream_id is a stable tuple: codec_type:language:title:disposition:ffmpeg_index
+                stream_id = f"{codec_type}:{language}:{title}:{disposition_str}:{ffmpeg_index}"
+                
                 track_info = {
-                    'index': i,
-                    'stream_index': stream.get('index', i),
+                    'index': len(metadata['audio_tracks']),  # UI-friendly sequential index
+                    'ffmpeg_index': ffmpeg_index,  # Actual ffmpeg stream index (source of truth)
+                    'language': language,
+                    'title': title,
                     'codec': stream.get('codec_name', ''),
-                    'codec_long': stream.get('codec_long_name', ''),
-                    'language': stream.get('tags', {}).get('language', 'unknown'),
                     'channels': stream.get('channels', 0),
-                    'sample_rate': stream.get('sample_rate', ''),
-                    'bitrate': stream.get('bit_rate', ''),
-                    'default': stream.get('disposition', {}).get('default', 0) == 1,
-                    'forced': stream.get('disposition', {}).get('forced', 0) == 1,
+                    'default': disposition.get('default', 0) == 1,
+                    'forced': disposition.get('forced', 0) == 1,
+                    'stream_id': stream_id,
                 }
                 metadata['audio_tracks'].append(track_info)
             
             elif codec_type == 'subtitle':
-                # Extract subtitle track info
+                # Normalized subtitle track format
+                # stream_id is a stable tuple: codec_type:language:title:disposition:ffmpeg_index
+                stream_id = f"{codec_type}:{language}:{title}:{disposition_str}:{ffmpeg_index}"
+                
                 track_info = {
-                    'index': i,
-                    'stream_index': stream.get('index', i),
+                    'index': len(metadata['subtitle_tracks']),  # UI-friendly sequential index
+                    'ffmpeg_index': ffmpeg_index,  # Actual ffmpeg stream index (source of truth)
+                    'language': language,
+                    'title': title,
                     'codec': stream.get('codec_name', ''),
-                    'codec_long': stream.get('codec_long_name', ''),
-                    'language': stream.get('tags', {}).get('language', 'unknown'),
-                    'forced': stream.get('disposition', {}).get('forced', 0) == 1,
-                    'default': stream.get('disposition', {}).get('default', 0) == 1,
+                    'forced': disposition.get('forced', 0) == 1,
+                    'default': disposition.get('default', 0) == 1,
+                    'hearing_impaired': disposition.get('hearing_impaired', 0) == 1,
+                    'stream_id': stream_id,
                 }
                 metadata['subtitle_tracks'].append(track_info)
             
@@ -833,33 +1018,53 @@ def analyze_pending_file(self, file_id: str):
         pending_file.save(update_fields=['status'])
         add_log(None, 'error', f'File analysis timeout for {pending_file.original_filename}')
         send_pending_file_update(str(file_id), 0, 'error', 'ERROR', 'Analysis timeout')
+        # Remove from cache on error
+        _downloaded_files_cache.pop(str(file_id), None)
     except subprocess.CalledProcessError as e:
         pending_file.status = 'expired'
         pending_file.save(update_fields=['status'])
         add_log(None, 'error', f'File analysis failed for {pending_file.original_filename}: {e}')
         send_pending_file_update(str(file_id), 0, 'error', 'ERROR', f'Analysis failed: {e}')
+        # Remove from cache on error
+        _downloaded_files_cache.pop(str(file_id), None)
     except json.JSONDecodeError as e:
         pending_file.status = 'expired'
         pending_file.save(update_fields=['status'])
         add_log(None, 'error', f'Failed to parse ffprobe output for {pending_file.original_filename}: {e}')
         send_pending_file_update(str(file_id), 0, 'error', 'ERROR', f'Failed to parse analysis results: {e}')
+        # Remove from cache on error
+        _downloaded_files_cache.pop(str(file_id), None)
     except Exception as e:
         pending_file.status = 'expired'
         pending_file.save(update_fields=['status'])
         add_log(None, 'error', f'Unexpected error during file analysis for {pending_file.original_filename}: {e}')
         send_pending_file_update(str(file_id), 0, 'error', 'ERROR', f'Analysis failed: {e}')
-        
-    except Exception as e:
-        pending_file.status = 'expired'
-        pending_file.save(update_fields=['status'])
-        add_log(None, 'error', f'Failed to download file for analysis: {e}')
+        # Remove from cache on error
+        _downloaded_files_cache.pop(str(file_id), None)
     finally:
-        # Cleanup temp file if downloaded (not needed if stream analysis succeeded)
+        # Cleanup temp file if downloaded AND analysis is complete
+        # Note: We keep the cached file if analysis succeeded for reuse in conversion
+        # Only delete if:
+        # 1. Analysis failed (status is not 'ready')
+        # 2. Or if we need to clean up after the finally block runs
+        pending_file.refresh_from_db()
+        if pending_file.status != 'ready':
+            # Analysis failed, clean up cached file
+            cached_path = _downloaded_files_cache.pop(str(file_id), None)
+            if cached_path and Path(cached_path).exists():
+                try:
+                    Path(cached_path).unlink()
+                except Exception:
+                    pass
+        
+        # Clean up temp directory if it exists and is empty
         if local_file_path and Path(local_file_path).exists():
             try:
-                Path(local_file_path).unlink()
-                temp_dir = Path(local_file_path).parent
-                if temp_dir.exists():
-                    temp_dir.rmdir()
+                # Only delete if not in cache (cache might still reference this path)
+                if str(local_file_path) not in _downloaded_files_cache.values():
+                    Path(local_file_path).unlink()
+                    temp_dir = Path(local_file_path).parent
+                    if temp_dir.exists() and not any(temp_dir.iterdir()):
+                        temp_dir.rmdir()
             except Exception:
                 pass

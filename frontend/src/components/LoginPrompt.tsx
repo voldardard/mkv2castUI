@@ -26,14 +26,14 @@ export function LoginPrompt({ lang }: LoginPromptProps) {
   const { requireAuth, config } = useRequireAuth();
   const { data: session } = useSession();
   const { data: localUser } = useCurrentUser();
-  const [providers, setProviders] = useState<OAuthProvider[]>([]);
+  const [providers, setProviders] = useState<OAuthProvider[] | Record<string, OAuthProvider> | null>([]);
   const [isLoadingProviders, setIsLoadingProviders] = useState(true);
 
   // Fetch available OAuth providers
   useEffect(() => {
     const fetchProviders = async () => {
       try {
-        const response = await api.get('/api/auth/providers/');
+        const response = await api.get(`/${lang}/api/auth/providers/`);
         setProviders(response.data);
       } catch (err) {
         console.error('Failed to fetch OAuth providers:', err);
@@ -59,8 +59,14 @@ export function LoginPrompt({ lang }: LoginPromptProps) {
     return null;
   }
 
-  const hasGoogle = providers.some(p => p.id === 'google');
-  const hasGithub = providers.some(p => p.id === 'github');
+  const providerList: OAuthProvider[] = Array.isArray(providers)
+    ? providers
+    : providers && typeof providers === 'object'
+      ? Object.values(providers as Record<string, OAuthProvider>)
+      : [];
+
+  const hasGoogle = providerList.some((p) => p.id === 'google');
+  const hasGithub = providerList.some((p) => p.id === 'github');
 
   const handleLocalLogin = () => {
     router.push(`/${lang}/auth/login`);

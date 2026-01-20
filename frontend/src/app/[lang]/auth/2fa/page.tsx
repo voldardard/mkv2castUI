@@ -73,7 +73,7 @@ export default function TwoFactorPage() {
 
     const check2FAStatus = async () => {
       try {
-        const response = await api.get('/api/auth/me/');
+        const response = await api.get(`/${lang}/api/auth/me/`);
         const userData = response.data;
         // UserSerializer returns has_2fa, not totp_enabled directly
         // Check both fields to be safe
@@ -114,7 +114,7 @@ export default function TwoFactorPage() {
 
     // Double-check 2FA status before attempting setup
     try {
-      const checkResponse = await api.get('/api/auth/me/');
+      const checkResponse = await api.get(`/${lang}/api/auth/me/`);
       const userData = checkResponse.data;
       const is2FAEnabled = Boolean(userData.has_2fa) || Boolean(userData.totp_enabled);
       
@@ -132,7 +132,7 @@ export default function TwoFactorPage() {
     }
 
     try {
-      const response = await api.post('/api/auth/2fa/setup/');
+      const response = await api.post(`/${lang}/api/auth/2fa/setup/`);
       setQrCode(response.data.qr_code);
       setSecret(response.data.secret);
       setStep('verify');
@@ -157,7 +157,7 @@ export default function TwoFactorPage() {
     setError('');
 
     try {
-      const response = await api.post('/api/auth/2fa/verify/', {
+      const response = await api.post(`/${lang}/api/auth/2fa/verify/`, {
         code: verifyCode,
       });
       setBackupCodes(response.data.backup_codes);
